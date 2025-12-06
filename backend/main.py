@@ -3,18 +3,18 @@
 import os
 import shutil
 from datetime import datetime
-from typing import List, Optional
+from typing import Optional, List
 
 from fastapi import (
     FastAPI,
     Request,
-    BackgroundTasks,
+    Form,
     UploadFile,
     File,
     Depends,
-    Form,
+    BackgroundTasks,
 )
-from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
+from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from starlette import status
@@ -39,6 +39,33 @@ os.makedirs(UPLOAD_DIR, exist_ok=True)
 
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 templates = Jinja2Templates(directory=TEMPLATES_DIR)
+
+
+# ------------------------------------------------------------------------------
+# Helper: ensure an anonymous user exists
+# ------------------------------------------------------------------------------
+
+def get_or_create_anonymous_user(db: Session) -> User:
+    """
+    Ensures there is a dummy 'anonymous' user so incidents can be saved
+    even when the front-end does not send user_id.
+    This avoids NOT NULL errors on incidents.user_id.
+    """
+    email = "anonymous@smart-accident-monitor.local"
+    user = db.query(User).filter(User.email == email).first()
+    if user:
+        return user
+
+    # Password is meaningless here; it's just to satisfy NOT NULL
+    user = User(
+        email=email,
+        password_hash="!",
+        role="anonymous",
+    )
+    db.add(user)
+    db.commit()
+    db.refresh(user)
+    return user
 
 
 # ------------------------------------------------------------------------------
@@ -100,7 +127,7 @@ def process_incident_video(incident_id: int) -> None:
 # ------------------------------------------------------------------------------
 
 @app.get("/", response_class=HTMLResponse)
-async def read_root(request: Request, db: Session = Depends(get_db)):
+def read_root(request: Request, db: Session = Depends(get_db)):
     incidents: List[Incident] = (
         db.query(Incident)
         .order_by(Incident.created_at.desc())
@@ -129,7 +156,7 @@ async def read_root(request: Request, db: Session = Depends(get_db)):
 # ------------------------------------------------------------------------------
 
 @app.get("/register", response_class=HTMLResponse)
-async def get_register(request: Request):
+def get_register(request: Request):
     return templates.TemplateResponse(
         "register.html",
         {"request": request},
@@ -137,7 +164,7 @@ async def get_register(request: Request):
 
 
 @app.post("/register")
-async def post_register(
+def post_register(
     request: Request,
     email: str = Form(...),
     password: str = Form(...),
@@ -164,7 +191,7 @@ async def post_register(
 # ------------------------------------------------------------------------------
 
 @app.get("/add-camera", response_class=HTMLResponse)
-async def get_add_camera(request: Request, db: Session = Depends(get_db)):
+def get_add_camera(request: Request, db: Session = Depends(get_db)):
     users: List[User] = db.query(User).all()
 
     return templates.TemplateResponse(
@@ -177,7 +204,7 @@ async def get_add_camera(request: Request, db: Session = Depends(get_db)):
 
 
 @app.post("/add-camera")
-async def post_add_camera(
+def post_add_camera(
     request: Request,
     name: str = Form(...),
     rtsp_url: str = Form(...),
@@ -204,145 +231,96 @@ async def post_add_camera(
 
 
 # ------------------------------------------------------------------------------
-# Upload incident page (Uber-style UI)
+# Upload incident page (Uber-style UI) – GET
 # ------------------------------------------------------------------------------
 
 @app.get("/upload-incident", response_class=HTMLResponse)
-async def get_upload_incident(request: Request):
+def get_upload_incident(request: Request):
     """
-    Renders upload_incident.html which already has:
-    - Record / Gallery
-    - Leaflet map
-    - 'Use my current location'
+    Renders upload_incident.html which you already shared.
+    Form posts back to the same URL (no action attribute).
     """
+    message = request.query_params.get("message")
+    error = request.query_params.get("error")
+
     return templates.TemplateResponse(
         "upload_incident.html",
-        {"request": request},
-    )
-
-
-# ------------------------------------------------------------------------------
-# Shared incident creation handler
-# ------------------------------------------------------------------------------
-
-async def _handle_incident_create(
-    request: Request,
-    background_tasks: BackgroundTasks,
-    db: Session,
-    video_file: Optional[UploadFile],
-):
-    """
-    Central logic:
-    - Expects an UploadFile from any of several field names.
-    - Reads lat/lng and (optional) user_id from the form.
-    - Saves file and inserts Incident row.
-    - Triggers background worker.
-    """
-
-    if video_file is None:
-        return JSONResponse(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            content={"detail": "Video file is required"},
-        )
-
-    form = await request.form()
-
-    # Location fields
-    raw_lat = form.get("lat") or form.get("location_lat")
-    raw_lng = form.get("lng") or form.get("location_lng")
-
-    if raw_lat is None or raw_lng is None:
-        return JSONResponse(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            content={"detail": "Latitude and longitude are required"},
-        )
-
-    try:
-        lat = float(raw_lat)
-        lng = float(raw_lng)
-    except ValueError:
-        return JSONResponse(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            content={"detail": "Invalid latitude/longitude"},
-        )
-
-    # user_id is now OPTIONAL (anonymous uploads allowed)
-    raw_user_id = form.get("user_id")
-    if raw_user_id is None or raw_user_id == "":
-        user_id = None
-    else:
-        try:
-            user_id = int(raw_user_id)
-        except ValueError:
-            return JSONResponse(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                content={"detail": "user_id must be an integer"},
-            )
-
-    # Save file under /static/uploads
-    filename = f"{datetime.utcnow().strftime('%Y%m%d%H%M%S')}_{video_file.filename}"
-    file_path = os.path.join(UPLOAD_DIR, filename)
-
-    with open(file_path, "wb") as buffer:
-        shutil.copyfileobj(video_file.file, buffer)
-
-    relative_video_path = f"/static/uploads/{filename}"
-
-    # Insert Incident row with placeholder severity; worker will update it
-    incident = Incident(
-        user_id=user_id,
-        video_path=relative_video_path,
-        location_lat=lat,
-        location_lng=lng,
-        severity="PENDING",
-        processed=False,
-    )
-    db.add(incident)
-    db.commit()
-    db.refresh(incident)
-
-    # Trigger background processing
-    background_tasks.add_task(process_incident_video, incident.id)
-
-    return JSONResponse(
-        status_code=status.HTTP_201_CREATED,
-        content={
-            "status": "ok",
-            "incident_id": incident.id,
-            "video_path": incident.video_path,
+        {
+            "request": request,
+            "message": message,
+            "error": error,
         },
     )
 
 
 # ------------------------------------------------------------------------------
-# Incident creation endpoint(s) – multiple paths, many field names
+# Upload incident – POST (matches your HTML exactly)
 # ------------------------------------------------------------------------------
 
-@app.post("/incidents")
-@app.post("/api/incidents")
-@app.post("/upload-incident")
-async def create_incident(
+@app.post("/upload-incident", response_class=HTMLResponse)
+async def post_upload_incident(
     request: Request,
     background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
 
-    # Accept multiple possible video field names from the frontend:
-    file: UploadFile = File(None),
-    video: UploadFile = File(None),
-    upload: UploadFile = File(None),
-    incident_video: UploadFile = File(None),
+    # This matches your JS which sets name="video" on the active input
+    video: UploadFile = File(...),
+
+    # Hidden fields in your form
+    location_lat: float = Form(...),
+    location_lng: float = Form(...),
+
+    # Optional description textarea
+    description: Optional[str] = Form(None),
 ):
     """
-    We accept several possible video field names:
-    - file
-    - video
-    - upload
-    - incident_video
+    Handles the Uber-style upload flow:
 
-    Whichever is non-null will be used.
+    - Accepts the 'video' file field (camera/gallery toggle already sets name="video").
+    - Reads location_lat and location_lng from hidden inputs.
+    - Uses or creates an 'anonymous' user so user_id is never NULL.
+    - Inserts Incident with severity=PENDING; background worker sets MINOR.
     """
-    video_file = file or video or upload or incident_video
-    return await _handle_incident_create(request, background_tasks, db, video_file)
+
+    # 1) Ensure we have an anonymous user
+    anon_user = get_or_create_anonymous_user(db)
+
+    # 2) Save the video file under /static/uploads
+    filename = f"{datetime.utcnow().strftime('%Y%m%d%H%M%S')}_{video.filename}"
+    file_path = os.path.join(UPLOAD_DIR, filename)
+
+    with open(file_path, "wb") as buffer:
+        shutil.copyfileobj(video.file, buffer)
+
+    # Path that can be served via /static
+    relative_video_path = f"/static/uploads/{filename}"
+
+    # 3) Insert incident row
+    incident = Incident(
+        user_id=anon_user.id,
+        video_path=relative_video_path,
+        location_lat=location_lat,
+        location_lng=location_lng,
+        severity="PENDING",
+        accident_type=None,
+        processed=False,
+        processed_at=None,
+    )
+    db.add(incident)
+    db.commit()
+    db.refresh(incident)
+
+    # 4) Kick background processing
+    background_tasks.add_task(process_incident_video, incident.id)
+
+    # 5) Redirect back with success message
+    success_msg = "Incident submitted successfully. It will be processed shortly."
+    url = f"/upload-incident?message={success_msg}"
+
+    return RedirectResponse(
+        url=url,
+        status_code=status.HTTP_303_SEE_OTHER,
+    )
 
 
 # ------------------------------------------------------------------------------
@@ -350,7 +328,7 @@ async def create_incident(
 # ------------------------------------------------------------------------------
 
 @app.get("/alerts", response_class=HTMLResponse)
-async def get_alerts(request: Request, db: Session = Depends(get_db)):
+def get_alerts(request: Request, db: Session = Depends(get_db)):
     alerts: List[Alert] = (
         db.query(Alert)
         .order_by(Alert.created_at.desc())
@@ -365,26 +343,3 @@ async def get_alerts(request: Request, db: Session = Depends(get_db)):
             "alerts": alerts,
         },
     )
-
-
-@app.get("/api/alerts")
-async def api_alerts(db: Session = Depends(get_db)):
-    alerts: List[Alert] = (
-        db.query(Alert)
-        .order_by(Alert.created_at.desc())
-        .limit(50)
-        .all()
-    )
-
-    return [
-        {
-            "id": a.id,
-            "incident_id": a.incident_id,
-            "severity": a.severity,
-            "message": a.message,
-            "created_at": a.created_at.isoformat()
-            if a.created_at
-            else None,
-        }
-        for a in alerts
-    ]

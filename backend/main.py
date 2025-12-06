@@ -234,7 +234,7 @@ async def _handle_incident_create(
     """
     Central logic:
     - Expects an UploadFile from any of several field names.
-    - Reads lat/lng and user_id from the form.
+    - Reads lat/lng and (optional) user_id from the form.
     - Saves file and inserts Incident row.
     - Triggers background worker.
     """
@@ -266,21 +266,18 @@ async def _handle_incident_create(
             content={"detail": "Invalid latitude/longitude"},
         )
 
-    # user_id (FK to users.id)
+    # user_id is now OPTIONAL (anonymous uploads allowed)
     raw_user_id = form.get("user_id")
     if raw_user_id is None or raw_user_id == "":
-        return JSONResponse(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            content={"detail": "user_id is required"},
-        )
-
-    try:
-        user_id = int(raw_user_id)
-    except ValueError:
-        return JSONResponse(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            content={"detail": "user_id must be an integer"},
-        )
+        user_id = None
+    else:
+        try:
+            user_id = int(raw_user_id)
+        except ValueError:
+            return JSONResponse(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                content={"detail": "user_id must be an integer"},
+            )
 
     # Save file under /static/uploads
     filename = f"{datetime.utcnow().strftime('%Y%m%d%H%M%S')}_{video_file.filename}"
@@ -342,16 +339,14 @@ async def create_incident(
     - upload
     - incident_video
 
-    Whichever is non-null will be used. This fixes your
-    "Video file is required" error even if the HTML uses
-    a slightly different name.
+    Whichever is non-null will be used.
     """
     video_file = file or video or upload or incident_video
     return await _handle_incident_create(request, background_tasks, db, video_file)
 
 
 # ------------------------------------------------------------------------------
-# Alerts listing (JSON)
+# Alerts listing
 # ------------------------------------------------------------------------------
 
 @app.get("/alerts", response_class=HTMLResponse)

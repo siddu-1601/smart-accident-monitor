@@ -1,0 +1,37 @@
+{% extends "base.html" %}
+
+{% block content %}
+<h2>Upload Accident Video</h2>
+
+{% if message %}
+  <p style="color:green;">{{ message }}</p>
+{% endif %}
+
+<form method="post" action="/upload-incident" enctype="multipart/form-data">
+  <label>Accident Video:</label><br>
+  <input type="file" name="video" accept="video/*" required><br><br>
+
+  <label>Latitude:</label><br>
+  <input type="text" id="location_lat" name="location_lat" required><br><br>
+
+  <label>Longitude:</label><br>
+  <input type="text" id="location_lng" name="location_lng" required><br><br>
+
+  <label>Description (optional):</label><br>
+  <textarea name="description" rows="3" cols="40"></textarea><br><br>
+
+  <button type="submit">Submit Incident</button>
+</form>
+
+<script>
+if (navigator.geolocation) {
+  navigator.geolocation.getCurrentPosition(function(pos) {
+    document.getElementById("location_lat").value = pos.coords.latitude;
+    document.getElementById("location_lng").value = pos.coords.longitude;
+  }, function(err) {
+    console.log("Location error", err);
+  });
+}
+</script>
+
+{% endblock %}

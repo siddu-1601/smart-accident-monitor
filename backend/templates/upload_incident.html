@@ -9,8 +9,8 @@
 </div>
 <h1 class="content-title">Upload an accident video with auto location</h1>
 <p class="content-subtitle">
-    Open this page on your phone, allow camera + location access, and record the incident live.
-    Latitude and longitude are auto-captured from your device — no manual coordinates.
+    Open this page on your phone, allow camera + location access, and either record the incident
+    live or pick it from your gallery. Latitude and longitude are auto-captured from your device.
 </p>
 {% endblock %}
 
@@ -29,20 +29,53 @@
 
 <form method="post" enctype="multipart/form-data" class="form" id="incident-form">
     <div class="form-row">
-        <label class="form-label" for="video">Accident video</label>
-        <!-- camera-first UX: on mobile, this opens the camera directly in video mode -->
+        <label class="form-label">Accident video</label>
+
+        <!-- Mode switch: camera vs gallery -->
+        <div style="display:flex; gap:0.5rem; margin-bottom:0.5rem; flex-wrap:wrap;">
+            <button
+                type="button"
+                class="btn-primary"
+                id="mode-camera-btn"
+                style="padding-inline:0.9rem; font-size:0.78rem;"
+            >
+                Record now (camera)
+            </button>
+            <button
+                type="button"
+                class="btn-primary"
+                id="mode-gallery-btn"
+                style="padding-inline:0.9rem; font-size:0.78rem; background:linear-gradient(135deg,#4b5563,#1f2937); box-shadow:none;"
+            >
+                Choose from gallery
+            </button>
+        </div>
+
+        <!-- Camera-first input (can force camera on some devices) -->
         <input
             class="form-input"
-            id="video"
-            name="video"
+            id="video-camera"
             type="file"
             accept="video/*"
             capture="environment"
             required
         >
+
+        <!-- Gallery input (normal picker) -->
+        <input
+            class="form-input"
+            id="video-gallery"
+            type="file"
+            accept="video/*"
+            style="display:none; margin-top:0.55rem;"
+        >
+
+        <!-- Hidden real field name FastAPI expects -->
+        <input type="hidden" id="video-active-flag">
+
         <p class="form-hint">
-            On mobile: tap this field to <strong>record a new video</strong> using your camera, or select
-            an existing clip from gallery. On desktop: you’ll see a normal file picker.
+            <strong>Camera mode:</strong> opens your camera directly to record a new clip.<br>
+            <strong>Gallery mode:</strong> opens your file/gallery picker to select an existing video.
         </p>
     </div>
 
@@ -60,8 +93,8 @@
         </div>
         <p class="form-hint" id="location-details" style="display:none;"></p>
         <p class="form-hint">
-            You must allow <strong>location access</strong> in your browser. If you deny it, the incident
-            cannot be submitted because severity and routing depend on GPS.
+            You must allow <strong>location access</strong> in your browser. If you deny it, the
+            incident cannot be submitted because severity and routing depend on GPS.
         </p>
     </div>
 
@@ -84,6 +117,59 @@
 {% block extra_scripts %}
 <script>
     (function () {
+        // --- VIDEO MODE TOGGLE (camera vs gallery) ---
+
+        const cameraBtn = document.getElementById("mode-camera-btn");
+        const galleryBtn = document.getElementById("mode-gallery-btn");
+        const cameraInput = document.getElementById("video-camera");
+        const galleryInput = document.getElementById("video-gallery");
+
+        // We will dynamically assign name="video" only to the active input
+        function setMode(mode) {
+            if (mode === "camera") {
+                cameraBtn.style.background = "linear-gradient(135deg, #2563eb, #4f46e5)";
+                cameraBtn.style.boxShadow = "0 12px 30px rgba(37,99,235,0.45),0 0 0 1px rgba(37,99,235,0.6)";
+                galleryBtn.style.background = "linear-gradient(135deg,#4b5563,#1f2937)";
+                galleryBtn.style.boxShadow = "none";
+
+                cameraInput.style.display = "block";
+                galleryInput.style.display = "none";
+
+                cameraInput.required = true;
+                galleryInput.required = false;
+
+                cameraInput.name = "video";
+                galleryInput.name = "";
+            } else {
+                galleryBtn.style.background = "linear-gradient(135deg, #2563eb, #4f46e5)";
+                galleryBtn.style.boxShadow = "0 12px 30px rgba(37,99,235,0.45),0 0 0 1px rgba(37,99,235,0.6)";
+                cameraBtn.style.background = "linear-gradient(135deg,#4b5563,#1f2937)";
+                cameraBtn.style.boxShadow = "none";
+
+                cameraInput.style.display = "none";
+                galleryInput.style.display = "block";
+
+                galleryInput.required = true;
+                cameraInput.required = false;
+
+                galleryInput.name = "video";
+                cameraInput.name = "";
+            }
+        }
+
+        cameraBtn.addEventListener("click", function () {
+            setMode("camera");
+        });
+
+        galleryBtn.addEventListener("click", function () {
+            setMode("gallery");
+        });
+
+        // Default mode: camera
+        setMode("camera");
+
+        // --- GEOLOCATION & SUBMIT CONTROL ---
+
         const statusEl = document.getElementById("location-status");
         const detailsEl = document.getElementById("location-details");
         const latInput = document.getElementById("location_lat");

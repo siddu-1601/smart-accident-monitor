@@ -5,3 +5,4 @@ SQLAlchemy
 psycopg2-binary
 python-multipart
 python-dotenv
+psycopg[binary]

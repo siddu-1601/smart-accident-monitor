@@ -1,75 +1,89 @@
 # backend/models.py
 
 from datetime import datetime
-from sqlalchemy import Column, Integer, String, Float, DateTime, Enum, ForeignKey
+from sqlalchemy import (
+    Column,
+    Integer,
+    String,
+    Boolean,
+    DateTime,
+    ForeignKey,
+    Text,
+    Float,
+)
 from sqlalchemy.orm import relationship
-import enum
 
 from .db import Base
-
-
-class UserRole(str, enum.Enum):
-    USER = "USER"
-    CCTV_OWNER = "CCTV_OWNER"
-
-
-class IncidentSeverity(str, enum.Enum):
-    PENDING = "PENDING"
-    MINOR = "MINOR"
-    MAJOR = "MAJOR"
-    SEVERE = "SEVERE"
-    NO_INCIDENT = "NO_INCIDENT"
 
 
 class User(Base):
     __tablename__ = "users"
 
     id = Column(Integer, primary_key=True, index=True)
-    name = Column(String, nullable=False)
-    email = Column(String, unique=True, index=True, nullable=False)
-    password = Column(String, nullable=False)  # For project only; in real life, hash it
-    role = Column(Enum(UserRole), default=UserRole.USER, nullable=False)
-    created_at = Column(DateTime, default=datetime.utcnow)
 
-    cameras = relationship("Camera", back_populates="owner")
+    # Adjust these if your existing schema is different
+    email = Column(String, unique=True, index=True, nullable=False)
+    password_hash = Column(String, nullable=False)
+    role = Column(String, default="user", nullable=False)
+
     incidents = relationship("Incident", back_populates="user")
+    cameras = relationship("Camera", back_populates="owner")
 
 
 class Camera(Base):
     __tablename__ = "cameras"
 
     id = Column(Integer, primary_key=True, index=True)
-    owner_id = Column(Integer, ForeignKey("users.id"), nullable=False)
     name = Column(String, nullable=False)
-    rtsp_url = Column(String, nullable=False)
-    location_lat = Column(Float, nullable=False)
-    location_lng = Column(Float, nullable=False)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    rtsp_url = Column(Text, nullable=False)
 
+    location_lat = Column(Float, nullable=True)
+    location_lng = Column(Float, nullable=True)
+
+    owner_id = Column(Integer, ForeignKey("users.id"), nullable=False)
     owner = relationship("User", back_populates="cameras")
-    incidents = relationship("Incident", back_populates="camera")
 
 
 class Incident(Base):
     __tablename__ = "incidents"
 
     id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
 
-    # "CCTV" or "USER_UPLOAD"
-    source = Column(String, nullable=False)
-
-    camera_id = Column(Integer, ForeignKey("cameras.id"), nullable=True)
-    user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    video_path = Column(Text, nullable=False)
 
     location_lat = Column(Float, nullable=False)
     location_lng = Column(Float, nullable=False)
-    occurred_at = Column(DateTime, default=datetime.utcnow)
 
-    severity = Column(Enum(IncidentSeverity), default=IncidentSeverity.PENDING)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    # NEW FIELDS FOR ML + ALERTING
+    # ----------------------------
+    # PENDING / MINOR / MAJOR / SEVERE
+    severity = Column(String, default="PENDING", nullable=False)
+
+    # e.g. "rear-end", "head-on", etc. Placeholder for now.
     accident_type = Column(String, nullable=True)
-    video_path = Column(String, nullable=True)
 
-    created_at = Column(DateTime, default=datetime.utcnow)
+    # Whether video has been processed by the background ML worker
+    processed = Column(Boolean, default=False, nullable=False)
+    processed_at = Column(DateTime, nullable=True)
 
-    camera = relationship("Camera", back_populates="incidents")
     user = relationship("User", back_populates="incidents")
+    alerts = relationship("Alert", back_populates="incident", cascade="all, delete-orphan")
+
+
+class Alert(Base):
+    __tablename__ = "alerts"
+
+    id = Column(Integer, primary_key=True, index=True)
+
+    incident_id = Column(Integer, ForeignKey("incidents.id"), nullable=False)
+    severity = Column(String, nullable=False)
+
+    # Short human-readable description of the alert
+    message = Column(Text, nullable=False)
+
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    incident = relationship("Incident", back_populates="alerts")

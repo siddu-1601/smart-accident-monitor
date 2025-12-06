@@ -2,16 +2,81 @@
 
 {% block title %}Upload incident · Smart Accident Monitor{% endblock %}
 
+{% block extra_head %}
+<!-- Leaflet CSS for map -->
+<link
+    rel="stylesheet"
+    href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+    integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY="
+    crossorigin=""
+/>
+<style>
+    #incident-map {
+        width: 100%;
+        height: 260px;
+        border-radius: 0.9rem;
+        overflow: hidden;
+        border: 1px solid rgba(148, 163, 184, 0.5);
+        box-shadow: 0 8px 24px rgba(15, 23, 42, 0.7);
+        margin-top: 0.4rem;
+    }
+
+    .leaflet-container {
+        background: #020617;
+    }
+
+    .map-controls {
+        display: flex;
+        align-items: center;
+        gap: 0.6rem;
+        flex-wrap: wrap;
+        margin-top: 0.4rem;
+    }
+
+    .btn-secondary {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        padding: 0.5rem 0.9rem;
+        border-radius: 999px;
+        border: 1px solid rgba(148, 163, 184, 0.7);
+        background: rgba(15, 23, 42, 0.9);
+        font-size: 0.78rem;
+        font-weight: 500;
+        color: #e5e7eb;
+        cursor: pointer;
+        outline: none;
+        transition: background 0.15s ease-out, box-shadow 0.15s ease-out, transform 0.12s ease-out;
+    }
+
+    .btn-secondary:hover {
+        background: rgba(30, 64, 175, 0.85);
+        box-shadow: 0 8px 20px rgba(37, 99, 235, 0.6);
+        transform: translateY(-1px);
+    }
+
+    .btn-secondary:active {
+        transform: translateY(0);
+        box-shadow: 0 4px 12px rgba(15, 23, 42, 0.9);
+    }
+
+    .btn-secondary[disabled] {
+        opacity: 0.6;
+        cursor: not-allowed;
+        box-shadow: none;
+    }
+</style>
+{% endblock %}
+
 {% block header %}
 <div class="badge">
     <span class="badge-dot"></span>
     Mobile-first capture
 </div>
-<h1 class="content-title">Upload an accident video with auto location</h1>
+<h1 class="content-title">Upload an accident video with map-based location</h1>
 <p class="content-subtitle">
-    Open this page on your phone, allow camera + location access, and either record the incident live
-    or pick it from your gallery. Once we capture a valid location on this device, we reuse it so you
-    don’t lose data on refresh.
+    Just like booking a cab: record or pick the video, then either tap <strong>Use my current
+    location</strong> or select the incident spot on the map. No one is typing coordinates.
 </p>
 {% endblock %}
 
@@ -29,10 +94,10 @@
 {% endif %}
 
 <form method="post" enctype="multipart/form-data" class="form" id="incident-form">
+    <!-- VIDEO INPUT WITH CAMERA/GALLERY OPTIONS -->
     <div class="form-row">
         <label class="form-label">Accident video</label>
 
-        <!-- Mode switch: camera vs gallery -->
         <div style="display:flex; gap:0.5rem; margin-bottom:0.5rem; flex-wrap:wrap;">
             <button
                 type="button"
@@ -72,49 +137,50 @@
         >
 
         <p class="form-hint">
-            <strong>Camera mode:</strong> opens your camera directly to record a new clip.<br>
-            <strong>Gallery mode:</strong> opens your gallery/file picker to select an existing video.
+            <strong>Camera mode:</strong> opens your camera to record a new clip.<br>
+            <strong>Gallery mode:</strong> lets you pick an existing accident video.
         </p>
     </div>
 
-    <!-- Hidden location fields: always sent to backend -->
+    <!-- HIDDEN FIELDS BACKEND USES -->
     <input type="hidden" id="location_lat" name="location_lat">
     <input type="hidden" id="location_lng" name="location_lng">
 
+    <!-- MAP + "USE CURRENT LOCATION" UX -->
     <div class="form-row">
         <label class="form-label">
-            Location
-            <span>(auto-captured from your device & cached)</span>
+            Incident location
+            <span>(select on map or use your current location)</span>
         </label>
 
-        <div style="display:flex; align-items:center; gap:0.6rem; flex-wrap:wrap;">
-            <div class="location-status loading" id="location-status">
-                Initializing location...
-            </div>
-            <button
-                type="button"
-                class="btn-primary"
-                id="retry-location-btn"
-                style="padding-inline:0.9rem; font-size:0.75rem; background:linear-gradient(135deg,#4b5563,#1f2937); box-shadow:none;"
-            >
-                Refresh location
+        <div id="incident-map"></div>
+
+        <div class="map-controls">
+            <button type="button" class="btn-secondary" id="use-current-location-btn">
+                Use my current location
             </button>
+            <span id="location-status" class="location-status loading">
+                Tap on the map to set the accident spot, or use your current location.
+            </span>
         </div>
 
         <p class="form-hint" id="location-details" style="display:none;"></p>
         <p class="form-hint">
-            The last good location from this device is remembered locally. If GPS is slow or times out,
-            we still use your previously captured coordinates so you don’t lose data.
+            Pan/zoom the map and tap exactly where the accident happened. If you are standing near the
+            scene, <strong>Use my current location</strong> is usually accurate enough.
         </p>
     </div>
 
+    <!-- OPTIONAL TEXT DESCRIPTION / ADDRESS -->
     <div class="form-row">
-        <label class="form-label" for="description">Additional description <span>(optional)</span></label>
+        <label class="form-label" for="description">
+            Description / address <span>(optional)</span>
+        </label>
         <textarea
             class="form-textarea"
             id="description"
             name="description"
-            placeholder="Describe what happened, visible injuries, blocked lanes, etc."
+            placeholder="Landmarks, direction of travel, injuries, number of vehicles, etc."
         ></textarea>
     </div>
 
@@ -125,16 +191,24 @@
 {% endblock %}
 
 {% block extra_scripts %}
+<!-- Leaflet JS -->
+<script
+    src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+    integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
+    crossorigin=""
+></script>
+
 <script>
     (function () {
-        // --- VIDEO MODE TOGGLE (camera vs gallery) ---
-
+        // ----------------------------
+        // VIDEO MODE TOGGLE
+        // ----------------------------
         const cameraBtn = document.getElementById("mode-camera-btn");
         const galleryBtn = document.getElementById("mode-gallery-btn");
         const cameraInput = document.getElementById("video-camera");
         const galleryInput = document.getElementById("video-gallery");
 
-        function setMode(mode) {
+        function setVideoMode(mode) {
             if (mode === "camera") {
                 cameraBtn.style.background = "linear-gradient(135deg, #2563eb, #4f46e5)";
                 cameraBtn.style.boxShadow = "0 12px 30px rgba(37,99,235,0.45),0 0 0 1px rgba(37,99,235,0.6)";
@@ -167,43 +241,35 @@
         }
 
         cameraBtn.addEventListener("click", function () {
-            setMode("camera");
+            setVideoMode("camera");
         });
 
         galleryBtn.addEventListener("click", function () {
-            setMode("gallery");
+            setVideoMode("gallery");
         });
 
         // Default mode: camera
-        setMode("camera");
+        setVideoMode("camera");
 
-        // --- GEOLOCATION & CACHING ---
-
+        // ----------------------------
+        // MAP + LOCATION LOGIC
+        // ----------------------------
         const statusEl = document.getElementById("location-status");
         const detailsEl = document.getElementById("location-details");
-        const retryBtn = document.getElementById("retry-location-btn");
+        const useCurrentBtn = document.getElementById("use-current-location-btn");
         const latInput = document.getElementById("location_lat");
         const lngInput = document.getElementById("location_lng");
         const submitBtn = document.getElementById("submit-btn");
 
-        const STORAGE_KEY = "sam_last_location";
+        let map, marker = null;
+        let hasLocation = false;
 
-        function setStatusLoading(message) {
+        function setStatus(type, message) {
             statusEl.textContent = message;
-            statusEl.classList.remove("ok", "error");
-            statusEl.classList.add("loading");
-        }
-
-        function setStatusOk(message) {
-            statusEl.textContent = message;
-            statusEl.classList.remove("loading", "error");
-            statusEl.classList.add("ok");
-        }
-
-        function setStatusError(message) {
-            statusEl.textContent = message;
-            statusEl.classList.remove("loading", "ok");
-            statusEl.classList.add("error");
+            statusEl.classList.remove("loading", "ok", "error");
+            if (type) {
+                statusEl.classList.add(type);
+            }
         }
 
         function enableSubmit(enable) {
@@ -214,113 +280,103 @@
             }
         }
 
-        function applyLocation(lat, lng, sourceLabel) {
+        function setLocation(lat, lng, label) {
+            hasLocation = true;
             latInput.value = lat.toString();
             lngInput.value = lng.toString();
 
+            // Update marker
+            if (!marker) {
+                marker = L.marker([lat, lng]).addTo(map);
+            } else {
+                marker.setLatLng([lat, lng]);
+            }
+
+            // Center map softly
+            map.setView([lat, lng], Math.max(map.getZoom(), 14));
+
+            // Update UI
             detailsEl.style.display = "block";
             detailsEl.textContent =
                 "Lat: " + lat.toFixed(6) + " · Lng: " + lng.toFixed(6) +
-                (sourceLabel ? " (" + sourceLabel + ")" : "");
-
-            setStatusOk("Location ready.");
+                (label ? " (" + label + ")" : "");
+            setStatus("ok", "Location set.");
             enableSubmit(true);
         }
 
-        function saveLocation(lat, lng) {
-            try {
-                const payload = { lat: lat, lng: lng, ts: Date.now() };
-                localStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
-            } catch (e) {
-                console.warn("Failed to persist location:", e);
-            }
+        function initMap() {
+            // Default center: India
+            map = L.map("incident-map").setView([20.5937, 78.9629], 5);
+
+            L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+                maxZoom: 19,
+                attribution: '&copy; OpenStreetMap contributors'
+            }).addTo(map);
+
+            map.on("click", function (e) {
+                setLocation(e.latlng.lat, e.latlng.lng, "selected on map");
+            });
+
+            setStatus("loading", "Tap on the map to mark the accident location, or use your current location.");
         }
 
-        function loadStoredLocation() {
-            try {
-                const raw = localStorage.getItem(STORAGE_KEY);
-                if (!raw) return null;
-                const parsed = JSON.parse(raw);
-                if (typeof parsed.lat !== "number" || typeof parsed.lng !== "number") {
-                    return null;
-                }
-                return parsed;
-            } catch (e) {
-                console.warn("Failed to read stored location:", e);
-                return null;
-            }
-        }
-
-        function requestLocation() {
+        function useCurrentLocation() {
             if (!navigator.geolocation) {
-                setStatusError("This browser does not support location. Use a modern mobile browser.");
-                if (!latInput.value || !lngInput.value) {
-                    enableSubmit(false);
-                }
+                setStatus("error", "This browser does not support location. Select on map instead.");
                 return;
             }
 
-            setStatusLoading("Requesting GPS from your device...");
-            retryBtn.disabled = true;
+            setStatus("loading", "Getting your current location...");
+            useCurrentBtn.disabled = true;
 
             navigator.geolocation.getCurrentPosition(
                 function (position) {
                     const lat = position.coords.latitude;
                     const lng = position.coords.longitude;
-
-                    saveLocation(lat, lng);
-                    applyLocation(lat, lng, "live GPS");
-
-                    retryBtn.disabled = false;
+                    setLocation(lat, lng, "current device location");
+                    useCurrentBtn.disabled = false;
                 },
                 function (error) {
                     console.warn("Geolocation error:", error);
-                    let msg = "Unable to retrieve location.";
+                    let msg = "Unable to get current location.";
                     if (error.code === error.PERMISSION_DENIED) {
-                        msg = "Location permission denied. Allow location to submit incidents.";
+                        msg = "Location permission denied. Either allow it or tap on map to set the spot.";
                     } else if (error.code === error.POSITION_UNAVAILABLE) {
-                        msg = "Location is unavailable. Try again in an open area.";
+                        msg = "Location is unavailable. Try again or tap on map.";
                     } else if (error.code === error.TIMEOUT) {
-                        msg = "Location request timed out. Try again.";
+                        msg = "Location request timed out. Try again or tap on map.";
                     }
-                    setStatusError(msg);
-                    retryBtn.disabled = false;
+                    setStatus("error", msg);
+                    useCurrentBtn.disabled = false;
 
-                    // If we already have a stored location, keep using it
-                    if (latInput.value && lngInput.value) {
-                        setStatusOk("Using last known location from device.");
-                        enableSubmit(true);
-                    } else {
+                    // User can still pick on map even if geolocation fails.
+                    if (!hasLocation) {
                         enableSubmit(false);
                     }
                 },
                 {
                     enableHighAccuracy: true,
-                    timeout: 30000,      // 30 seconds instead of 10
-                    maximumAge: 600000   // allow cached location up to 10 minutes old
+                    timeout: 15000,
+                    maximumAge: 0
                 }
             );
         }
 
-        retryBtn.addEventListener("click", function () {
-            requestLocation();
+        useCurrentBtn.addEventListener("click", function () {
+            useCurrentLocation();
         });
 
-        // Initial logic on page load:
-        // 1) Try to use stored location
-        // 2) Also attempt a fresh GPS call (user can click Refresh)
+        // Ensure we have a location before submit
+        document.getElementById("incident-form").addEventListener("submit", function (e) {
+            if (!latInput.value || !lngInput.value) {
+                e.preventDefault();
+                setStatus("error", "Please set the incident location on the map or use your current location.");
+            }
+        });
 
-        const stored = loadStoredLocation();
-        if (stored) {
-            applyLocation(stored.lat, stored.lng, "stored from previous session");
-            setStatusOk("Using last known location from this device.");
-        } else {
-            setStatusLoading("No stored location. Requesting GPS from your device...");
-            enableSubmit(false);
-        }
-
-        // Kick off an async refresh attempt (user can also press Refresh manually)
-        requestLocation();
+        // Boot
+        initMap();
+        enableSubmit(false);
     })();
 </script>
 {% endblock %}

@@ -1,32 +1,67 @@
 {% extends "base.html" %}
 
+{% block title %}Register CCTV camera · Smart Accident Monitor{% endblock %}
+
+{% block header %}
+<div class="badge">
+    <span class="badge-dot"></span>
+    CCTV onboarding
+</div>
+<h1 class="content-title">Register a CCTV camera</h1>
+<p class="content-subtitle">
+    Link a camera to a CCTV owner with a fixed RTSP URL and GPS location. The backend will later
+    attach a monitoring loop per camera and generate incidents automatically.
+</p>
+{% endblock %}
+
 {% block content %}
-<h2>Register CCTV Camera</h2>
-
-{% if message %}
-  <p style="color:green;">{{ message }}</p>
-{% endif %}
 {% if error %}
-  <p style="color:red;">{{ error }}</p>
+<div class="alert alert-error">
+    {{ error }}
+</div>
+{% elif success %}
+<div class="alert alert-success">
+    {{ success }}
+</div>
 {% endif %}
 
-<form method="post" action="/add-camera">
-  <label>Owner User ID:</label><br>
-  <input type="number" name="owner_id" required><br><br>
+<form method="post" class="form">
+    <div class="form-row">
+        <label class="form-label" for="owner_id">Owner user ID</label>
+        <input class="form-input" id="owner_id" name="owner_id" type="number" required placeholder="Numeric user ID for the CCTV owner">
+        <p class="form-hint">
+            You can fetch this from Supabase's <strong>users</strong> table after creating the owner.
+        </p>
+    </div>
 
-  <label>Camera Name:</label><br>
-  <input type="text" name="name" required><br><br>
+    <div class="form-row">
+        <label class="form-label" for="name">Camera name</label>
+        <input class="form-input" id="name" name="name" type="text" required placeholder="e.g. Junction 3 – Northbound">
+    </div>
 
-  <label>RTSP URL:</label><br>
-  <input type="text" name="rtsp_url" required><br><br>
+    <div class="form-row">
+        <label class="form-label" for="rtsp_url">RTSP URL</label>
+        <input class="form-input" id="rtsp_url" name="rtsp_url" type="text" required placeholder="rtsp://user:password@host:port/stream">
+        <p class="form-hint">
+            For now, this can even be a dummy RTSP URL. The monitoring worker will simulate reading from it.
+        </p>
+    </div>
 
-  <label>Latitude:</label><br>
-  <input type="text" name="location_lat" required><br><br>
+    <div class="form-row">
+        <label class="form-label" for="location_lat">Latitude</label>
+        <input class="form-input" id="location_lat" name="location_lat" type="number" step="0.000001" required placeholder="12.971600">
+    </div>
 
-  <label>Longitude:</label><br>
-  <input type="text" name="location_lng" required><br><br>
+    <div class="form-row">
+        <label class="form-label" for="location_lng">Longitude</label>
+        <input class="form-input" id="location_lng" name="location_lng" type="number" step="0.000001" required placeholder="77.594600">
+        <p class="form-hint">
+            These coordinates are fixed for the camera. You can take them from Google Maps once while onboarding.
+        </p>
+    </div>
 
-  <button type="submit">Add Camera</button>
+    <button type="submit" class="btn-primary">
+        Register camera
+    </button>
 </form>
-
 {% endblock %}

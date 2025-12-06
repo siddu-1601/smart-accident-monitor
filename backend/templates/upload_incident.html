@@ -1,37 +1,148 @@
 {% extends "base.html" %}
 
-{% block content %}
-<h2>Upload Accident Video</h2>
+{% block title %}Upload incident · Smart Accident Monitor{% endblock %}
 
+{% block header %}
+<div class="badge">
+    <span class="badge-dot"></span>
+    Mobile-first capture
+</div>
+<h1 class="content-title">Upload an accident video with auto location</h1>
+<p class="content-subtitle">
+    Open this page on your phone, allow location access, and upload the incident video. Latitude and
+    longitude are auto-captured from your device — no manual entry.
+</p>
+{% endblock %}
+
+{% block content %}
 {% if message %}
-  <p style="color:green;">{{ message }}</p>
+<div class="alert alert-success">
+    {{ message }}
+</div>
 {% endif %}
 
-<form method="post" action="/upload-incident" enctype="multipart/form-data">
-  <label>Accident Video:</label><br>
-  <input type="file" name="video" accept="video/*" required><br><br>
+{% if error %}
+<div class="alert alert-error">
+    {{ error }}
+</div>
+{% endif %}
 
-  <label>Latitude:</label><br>
-  <input type="text" id="location_lat" name="location_lat" required><br><br>
+<form method="post" enctype="multipart/form-data" class="form" id="incident-form">
+    <div class="form-row">
+        <label class="form-label" for="video">Accident video</label>
+        <input class="form-input" id="video" name="video" type="file" accept="video/*" required>
+        <p class="form-hint">
+            Upload a short clip (few seconds is enough) showing the incident clearly. This is what the model will use later.
+        </p>
+    </div>
 
-  <label>Longitude:</label><br>
-  <input type="text" id="location_lng" name="location_lng" required><br><br>
+    <!-- Hidden location fields: auto-filled from GPS -->
+    <input type="hidden" id="location_lat" name="location_lat">
+    <input type="hidden" id="location_lng" name="location_lng">
 
-  <label>Description (optional):</label><br>
-  <textarea name="description" rows="3" cols="40"></textarea><br><br>
+    <div class="form-row">
+        <label class="form-label">
+            Location
+            <span>(auto-captured from your device)</span>
+        </label>
+        <div class="location-status loading" id="location-status">
+            Requesting GPS from your device...
+        </div>
+        <p class="form-hint" id="location-details" style="display:none;"></p>
+        <p class="form-hint">
+            You must allow location access in your browser. If you deny it, the incident cannot be submitted because severity and routing depend on GPS.
+        </p>
+    </div>
 
-  <button type="submit">Submit Incident</button>
+    <div class="form-row">
+        <label class="form-label" for="description">Additional description <span>(optional)</span></label>
+        <textarea class="form-textarea" id="description" name="description" placeholder="Describe what happened, visible injuries, blocked lanes, etc."></textarea>
+    </div>
+
+    <button type="submit" class="btn-primary" id="submit-btn" disabled>
+        Submit incident
+    </button>
 </form>
+{% endblock %}
 
+{% block extra_scripts %}
 <script>
-if (navigator.geolocation) {
-  navigator.geolocation.getCurrentPosition(function(pos) {
-    document.getElementById("location_lat").value = pos.coords.latitude;
-    document.getElementById("location_lng").value = pos.coords.longitude;
-  }, function(err) {
-    console.log("Location error", err);
-  });
-}
-</script>
+    (function () {
+        const statusEl = document.getElementById("location-status");
+        const detailsEl = document.getElementById("location-details");
+        const latInput = document.getElementById("location_lat");
+        const lngInput = document.getElementById("location_lng");
+        const submitBtn = document.getElementById("submit-btn");
 
+        function setStatusLoading(message) {
+            statusEl.textContent = message;
+            statusEl.classList.remove("ok", "error");
+            statusEl.classList.add("loading");
+        }
+
+        function setStatusOk(message) {
+            statusEl.textContent = message;
+            statusEl.classList.remove("loading", "error");
+            statusEl.classList.add("ok");
+        }
+
+        function setStatusError(message) {
+            statusEl.textContent = message;
+            statusEl.classList.remove("loading", "ok");
+            statusEl.classList.add("error");
+        }
+
+        function enableSubmit(enable) {
+            if (enable) {
+                submitBtn.removeAttribute("disabled");
+            } else {
+                submitBtn.setAttribute("disabled", "disabled");
+            }
+        }
+
+        // Initial state
+        enableSubmit(false);
+        setStatusLoading("Requesting GPS from your device...");
+
+        if (!navigator.geolocation) {
+            setStatusError("This browser does not support location. Use a modern mobile browser.");
+            enableSubmit(false);
+            return;
+        }
+
+        navigator.geolocation.getCurrentPosition(
+            function (position) {
+                const lat = position.coords.latitude;
+                const lng = position.coords.longitude;
+
+                latInput.value = lat.toString();
+                lngInput.value = lng.toString();
+
+                setStatusOk("Location captured from device.");
+                detailsEl.style.display = "block";
+                detailsEl.textContent = "Lat: " + lat.toFixed(6) + " · Lng: " + lng.toFixed(6);
+
+                enableSubmit(true);
+            },
+            function (error) {
+                console.warn("Geolocation error:", error);
+                let msg = "Unable to retrieve location.";
+                if (error.code === error.PERMISSION_DENIED) {
+                    msg = "Location permission denied. Allow location to submit incidents.";
+                } else if (error.code === error.POSITION_UNAVAILABLE) {
+                    msg = "Location is unavailable. Try again in an open area.";
+                } else if (error.code === error.TIMEOUT) {
+                    msg = "Location request timed out. Try again.";
+                }
+                setStatusError(msg);
+                enableSubmit(false);
+            },
+            {
+                enableHighAccuracy: true,
+                timeout: 10000,
+                maximumAge: 5000
+            }
+        );
+    })();
+</script>
 {% endblock %}

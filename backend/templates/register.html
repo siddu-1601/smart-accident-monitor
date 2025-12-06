@@ -1,28 +1,63 @@
 {% extends "base.html" %}
 
-{% block content %}
-<h2>User Registration</h2>
+{% block title %}Register user · Smart Accident Monitor{% endblock %}
 
+{% block header %}
+<div class="badge">
+    <span class="badge-dot"></span>
+    Identity layer
+</div>
+<h1 class="content-title">Register a new user or CCTV owner</h1>
+<p class="content-subtitle">
+    Create a basic account to represent a normal user or a CCTV owner. Passwords are plain-text for
+    now; this is a functional prototype, not production auth yet.
+</p>
+{% endblock %}
+
+{% block content %}
 {% if error %}
-  <p style="color:red;">{{ error }}</p>
+<div class="alert alert-error">
+    {{ error }}
+</div>
+{% elif success %}
+<div class="alert alert-success">
+    {{ success }}
+</div>
 {% endif %}
 
-<form method="post" action="/register">
-  <label>Name:</label><br>
-  <input type="text" name="name" required><br><br>
+<form method="post" class="form">
+    <div class="form-row">
+        <label class="form-label" for="name">Full name</label>
+        <input class="form-input" id="name" name="name" type="text" required placeholder="e.g. Aditya Kumar">
+    </div>
 
-  <label>Email:</label><br>
-  <input type="email" name="email" required><br><br>
+    <div class="form-row">
+        <label class="form-label" for="email">Email</label>
+        <input class="form-input" id="email" name="email" type="email" required placeholder="you@example.com">
+        <p class="form-hint">Used only as a unique identifier for now. No email verification yet.</p>
+    </div>
 
-  <label>Password:</label><br>
-  <input type="password" name="password" required><br><br>
+    <div class="form-row">
+        <label class="form-label" for="password">Password</label>
+        <input class="form-input" id="password" name="password" type="password" required placeholder="Keep it simple (dev only)">
+        <p class="form-hint">
+            This is stored as plain text in the DB. For real deployments, you’ll replace this with hashed passwords and a proper auth layer.
+        </p>
+    </div>
 
-  <label>Role:</label><br>
-  <select name="role">
-    <option value="USER">Normal User</option>
-    <option value="CCTV_OWNER">CCTV Owner</option>
-  </select><br><br>
+    <div class="form-row">
+        <label class="form-label" for="role">Role</label>
+        <select class="form-select" id="role" name="role" required>
+            <option value="USER">Normal user (reports incidents)</option>
+            <option value="CCTV_OWNER">CCTV owner (registers cameras)</option>
+        </select>
+        <p class="form-hint">
+            CCTV owners will be able to link cameras to their user ID and have those monitored centrally.
+        </p>
+    </div>
 
-  <button type="submit">Register</button>
+    <button type="submit" class="btn-primary">
+        Create user
+    </button>
 </form>
 {% endblock %}

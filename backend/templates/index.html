@@ -1,11 +1,63 @@
 {% extends "base.html" %}
 
+{% block title %}Smart Accident Monitor · Overview{% endblock %}
+
+{% block header %}
+<div class="badge">
+    <span class="badge-dot"></span>
+    Cloud-only deployment is live
+</div>
+<h1 class="content-title">One platform for all road incidents</h1>
+<p class="content-subtitle">
+    Register users and CCTV owners, upload accident footage from mobile, and centralize all
+    incidents in a single cloud backend. Location is auto-captured from the device; no manual
+    latitude/longitude needed.
+</p>
+{% endblock %}
+
 {% block content %}
-<h2>Welcome</h2>
-<p>This system lets you:</p>
-<ul>
-  <li>Register as a user or CCTV owner</li>
-  <li>Upload accident videos with your location</li>
-  <li>Register CCTV cameras with fixed locations for monitoring</li>
-</ul>
+<div style="display: flex; flex-direction: column; gap: 1.25rem; margin-top: 0.25rem;">
+    <section>
+        <div class="form-section-title">What you can do right now</div>
+        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 1rem;">
+            <div style="border-radius: 1.1rem; border: 1px solid rgba(148,163,184,0.4); padding: 0.9rem 1rem; background: radial-gradient(circle at top left, rgba(59,130,246,0.2), transparent 60%), rgba(15,23,42,0.9);">
+                <div style="font-size: 0.9rem; font-weight: 600; margin-bottom: 0.3rem;">Create a user</div>
+                <p class="form-hint">
+                    Go to <strong>Register user</strong> to add normal users or CCTV owners.
+                    These IDs are used to link cameras and incidents.
+                </p>
+                <a href="/register" class="btn-primary" style="margin-top: 0.35rem; padding-inline: 1rem;">Register user</a>
+            </div>
+
+            <div style="border-radius: 1.1rem; border: 1px solid rgba(148,163,184,0.4); padding: 0.9rem 1rem; background: radial-gradient(circle at top right, rgba(236,72,153,0.2), transparent 60%), rgba(15,23,42,0.9);">
+                <div style="font-size: 0.9rem; font-weight: 600; margin-bottom: 0.3rem;">Upload a test incident</div>
+                <p class="form-hint">
+                    On your phone, open <strong>Upload incident</strong>, allow location,
+                    and upload a small accident clip. GPS will auto-fill; no typing coordinates.
+                </p>
+                <a href="/upload-incident" class="btn-primary" style="margin-top: 0.35rem; padding-inline: 1rem;">Upload incident</a>
+            </div>
+
+            <div style="border-radius: 1.1rem; border: 1px solid rgba(148,163,184,0.4); padding: 0.9rem 1rem; background: radial-gradient(circle at bottom, rgba(52,211,153,0.25), transparent 60%), rgba(15,23,42,0.9);">
+                <div style="font-size: 0.9rem; font-weight: 600; margin-bottom: 0.3rem;">Register a CCTV camera</div>
+                <p class="form-hint">
+                    For CCTV owners, register the RTSP URL and fixed GPS coordinates once.
+                    Later, a worker will simulate live monitoring.
+                </p>
+                <a href="/add-camera" class="btn-primary" style="margin-top: 0.35rem; padding-inline: 1rem;">Register CCTV</a>
+            </div>
+        </div>
+    </section>
+
+    <section>
+        <div class="form-section-title">Flow summary</div>
+        <ol style="margin: 0; padding-left: 1.2rem; font-size: 0.8rem; color: var(--text-muted); display: flex; flex-direction: column; gap: 0.3rem;">
+            <li>Users open the website (ideally on mobile) and upload an incident video.</li>
+            <li>The browser uses <strong>navigator.geolocation</strong> to capture GPS and attach it to the incident.</li>
+            <li>The backend stores the video path + location + timestamp in Supabase as a new incident.</li>
+            <li>A background worker (next step) will classify severity (MINOR / MAJOR / SEVERE) from the video.</li>
+            <li>For MAJOR and SEVERE, alerts are generated for nearby emergency services.</li>
+        </ol>
+    </section>
+</div>
 {% endblock %}

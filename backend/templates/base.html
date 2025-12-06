@@ -1,23 +1,554 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-  <meta charset="utf-8">
-  <title>Smart Accident Monitor</title>
+    <meta charset="UTF-8">
+    <title>{% block title %}Smart Accident Monitor{% endblock %}</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+
+    <!-- Simple modern font -->
+    <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600&display=swap" rel="stylesheet">
+
+    <style>
+        :root {
+            --primary: #2563eb;
+            --primary-dark: #1d4ed8;
+            --secondary: #f97316;
+            --bg-gradient: linear-gradient(135deg, #0f172a, #020617);
+            --card-bg: rgba(15, 23, 42, 0.95);
+            --text-main: #e5e7eb;
+            --text-muted: #9ca3af;
+            --border-subtle: rgba(148, 163, 184, 0.4);
+            --error: #ef4444;
+            --success: #22c55e;
+        }
+
+        * {
+            box-sizing: border-box;
+        }
+
+        body {
+            margin: 0;
+            font-family: "Poppins", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+            background: var(--bg-gradient);
+            color: var(--text-main);
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+
+        a {
+            text-decoration: none;
+            color: inherit;
+        }
+
+        .app-shell {
+            display: flex;
+            flex-direction: column;
+            min-height: 100vh;
+        }
+
+        /* NAVBAR */
+
+        .nav {
+            backdrop-filter: blur(18px);
+            background: linear-gradient(
+                to right,
+                rgba(15, 23, 42, 0.92),
+                rgba(15, 23, 42, 0.8),
+                rgba(37, 99, 235, 0.85)
+            );
+            border-bottom: 1px solid rgba(148, 163, 184, 0.4);
+            position: sticky;
+            top: 0;
+            z-index: 20;
+        }
+
+        .nav-inner {
+            max-width: 1080px;
+            margin: 0 auto;
+            padding: 0.75rem 1.25rem;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 1rem;
+        }
+
+        .nav-left {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+        }
+
+        .nav-logo {
+            width: 40px;
+            height: 40px;
+            border-radius: 999px;
+            background: radial-gradient(circle at 30% 30%, #f97316, #db2777, #4f46e5);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: #f9fafb;
+            font-weight: 700;
+            font-size: 1rem;
+            box-shadow: 0 0 40px rgba(56, 189, 248, 0.4);
+        }
+
+        .nav-title {
+            display: flex;
+            flex-direction: column;
+        }
+
+        .nav-title-main {
+            font-size: 1rem;
+            font-weight: 600;
+        }
+
+        .nav-title-sub {
+            font-size: 0.75rem;
+            color: var(--text-muted);
+        }
+
+        .nav-links {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            flex-wrap: wrap;
+        }
+
+        .nav-link {
+            padding: 0.45rem 0.85rem;
+            border-radius: 999px;
+            font-size: 0.8rem;
+            font-weight: 500;
+            color: #e5e7eb;
+            border: 1px solid transparent;
+            transition: all 0.18s ease-out;
+            background: rgba(15, 23, 42, 0.7);
+        }
+
+        .nav-link:hover {
+            border-color: rgba(129, 140, 248, 0.9);
+            background: rgba(37, 99, 235, 0.85);
+            box-shadow: 0 0 18px rgba(59, 130, 246, 0.6);
+        }
+
+        .nav-link-primary {
+            background: linear-gradient(135deg, #2563eb, #4f46e5);
+            border-color: rgba(59, 130, 246, 0.9);
+            box-shadow: 0 0 20px rgba(59, 130, 246, 0.7);
+        }
+
+        .nav-link-primary:hover {
+            background: linear-gradient(135deg, #1d4ed8, #4338ca);
+        }
+
+        /* MAIN LAYOUT */
+
+        .page-main {
+            flex: 1;
+            display: flex;
+            padding: 1.75rem 1rem 2rem;
+        }
+
+        .page-inner {
+            max-width: 1080px;
+            margin: 0 auto;
+            width: 100%;
+            display: grid;
+            grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
+            gap: 1.75rem;
+        }
+
+        @media (max-width: 900px) {
+            .page-inner {
+                grid-template-columns: minmax(0, 1fr);
+            }
+        }
+
+        /* LEFT CONTENT PANEL */
+
+        .content-card {
+            background: radial-gradient(circle at top, rgba(59, 130, 246, 0.25), transparent 55%),
+                        var(--card-bg);
+            border-radius: 1.5rem;
+            padding: 1.5rem 1.5rem 1.75rem;
+            border: 1px solid var(--border-subtle);
+            box-shadow:
+                0 24px 50px rgba(15, 23, 42, 0.7),
+                0 0 0 1px rgba(15, 23, 42, 0.9);
+            position: relative;
+            overflow: hidden;
+        }
+
+        .content-card::before {
+            content: "";
+            position: absolute;
+            inset: -20%;
+            background: radial-gradient(circle at 10% 0%, rgba(96, 165, 250, 0.2), transparent 55%);
+            opacity: 0.4;
+            pointer-events: none;
+        }
+
+        .content-header {
+            margin-bottom: 1rem;
+        }
+
+        .content-title {
+            font-size: 1.3rem;
+            font-weight: 600;
+        }
+
+        .content-subtitle {
+            font-size: 0.9rem;
+            color: var(--text-muted);
+            margin-top: 0.25rem;
+        }
+
+        /* RIGHT SIDEBAR PANEL */
+
+        .sidebar-card {
+            background: rgba(15, 23, 42, 0.9);
+            border-radius: 1.5rem;
+            padding: 1.25rem 1.4rem 1.5rem;
+            border: 1px solid rgba(148, 163, 184, 0.35);
+            display: flex;
+            flex-direction: column;
+            gap: 0.75rem;
+        }
+
+        .sidebar-title {
+            font-size: 0.95rem;
+            font-weight: 600;
+            margin-bottom: 0.4rem;
+        }
+
+        .pill {
+            display: inline-flex;
+            align-items: center;
+            padding: 0.25rem 0.55rem;
+            border-radius: 999px;
+            font-size: 0.7rem;
+            font-weight: 500;
+        }
+
+        .pill-success {
+            background: rgba(34, 197, 94, 0.15);
+            color: #4ade80;
+            border: 1px solid rgba(34, 197, 94, 0.6);
+        }
+
+        .pill-warning {
+            background: rgba(234, 179, 8, 0.08);
+            color: #facc15;
+            border: 1px solid rgba(234, 179, 8, 0.6);
+        }
+
+        .pill-muted {
+            background: rgba(148, 163, 184, 0.15);
+            color: var(--text-muted);
+        }
+
+        .sidebar-list {
+            list-style: none;
+            padding: 0;
+            margin: 0;
+        }
+
+        .sidebar-list li {
+            display: flex;
+            align-items: flex-start;
+            gap: 0.5rem;
+            padding: 0.35rem 0;
+            font-size: 0.8rem;
+            color: var(--text-muted);
+        }
+
+        .sidebar-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 999px;
+            margin-top: 0.3rem;
+            background: linear-gradient(135deg, #22c55e, #16a34a);
+            box-shadow: 0 0 10px rgba(34, 197, 94, 0.7);
+        }
+
+        .sidebar-footer {
+            margin-top: 0.75rem;
+            font-size: 0.78rem;
+            color: var(--text-muted);
+        }
+
+        .sidebar-footer strong {
+            color: #e5e7eb;
+        }
+
+        /* FORMS / BUTTONS */
+
+        .form-section-title {
+            font-size: 1.05rem;
+            font-weight: 600;
+            margin-bottom: 0.75rem;
+        }
+
+        .form {
+            display: flex;
+            flex-direction: column;
+            gap: 0.9rem;
+            margin-top: 0.25rem;
+        }
+
+        .form-row {
+            display: flex;
+            flex-direction: column;
+            gap: 0.35rem;
+        }
+
+        .form-label {
+            font-size: 0.8rem;
+            font-weight: 500;
+            color: #e5e7eb;
+        }
+
+        .form-label span {
+            font-weight: 400;
+            color: var(--text-muted);
+        }
+
+        .form-input,
+        .form-select,
+        .form-textarea {
+            width: 100%;
+            padding: 0.6rem 0.75rem;
+            border-radius: 0.75rem;
+            background: rgba(15, 23, 42, 0.85);
+            border: 1px solid rgba(148, 163, 184, 0.5);
+            color: #f9fafb;
+            font-size: 0.85rem;
+            outline: none;
+            transition: border-color 0.16s ease-out, box-shadow 0.16s ease-out, background 0.16s ease-out;
+        }
+
+        .form-input::placeholder,
+        .form-textarea::placeholder {
+            color: rgba(148, 163, 184, 0.7);
+        }
+
+        .form-input:focus,
+        .form-select:focus,
+        .form-textarea:focus {
+            border-color: rgba(59, 130, 246, 0.9);
+            box-shadow: 0 0 0 1px rgba(59, 130, 246, 0.7);
+            background: rgba(15, 23, 42, 0.95);
+        }
+
+        .form-textarea {
+            min-height: 90px;
+            resize: vertical;
+        }
+
+        .form-hint {
+            font-size: 0.75rem;
+            color: var(--text-muted);
+        }
+
+        .btn-primary {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 0.35rem;
+            padding: 0.65rem 1.2rem;
+            border-radius: 999px;
+            border: none;
+            outline: none;
+            cursor: pointer;
+            font-size: 0.85rem;
+            font-weight: 600;
+            background: linear-gradient(135deg, #2563eb, #4f46e5);
+            color: #f9fafb;
+            box-shadow:
+                0 12px 30px rgba(37, 99, 235, 0.45),
+                0 0 0 1px rgba(37, 99, 235, 0.6);
+            transition: transform 0.14s ease-out, box-shadow 0.14s ease-out, background 0.14s ease-out;
+        }
+
+        .btn-primary:hover {
+            transform: translateY(-1px);
+            background: linear-gradient(135deg, #1d4ed8, #4338ca);
+            box-shadow:
+                0 16px 30px rgba(37, 99, 235, 0.75),
+                0 0 0 1px rgba(37, 99, 235, 0.9);
+        }
+
+        .btn-primary:active {
+            transform: translateY(0);
+            box-shadow:
+                0 6px 16px rgba(15, 23, 42, 0.9),
+                0 0 0 1px rgba(37, 99, 235, 0.8);
+        }
+
+        .btn-primary[disabled],
+        .btn-primary:disabled {
+            opacity: 0.55;
+            cursor: not-allowed;
+            box-shadow: none;
+            background: linear-gradient(135deg, #374151, #1f2937);
+        }
+
+        .badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.25rem;
+            padding: 0.2rem 0.55rem;
+            border-radius: 999px;
+            font-size: 0.7rem;
+            background: rgba(37, 99, 235, 0.15);
+            border: 1px solid rgba(37, 99, 235, 0.5);
+            color: #bfdbfe;
+        }
+
+        .badge-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 999px;
+            background: #22c55e;
+            box-shadow: 0 0 10px rgba(34, 197, 94, 0.8);
+        }
+
+        /* ALERTS / STATUS */
+
+        .alert {
+            padding: 0.6rem 0.75rem;
+            border-radius: 0.9rem;
+            font-size: 0.8rem;
+            margin-bottom: 0.75rem;
+        }
+
+        .alert-error {
+            background: rgba(239, 68, 68, 0.09);
+            border: 1px solid rgba(239, 68, 68, 0.5);
+            color: #fecaca;
+        }
+
+        .alert-success {
+            background: rgba(34, 197, 94, 0.08);
+            border: 1px solid rgba(34, 197, 94, 0.5);
+            color: #bbf7d0;
+        }
+
+        .location-status {
+            font-size: 0.8rem;
+            margin-top: 0.25rem;
+        }
+
+        .location-status.loading {
+            color: #facc15;
+        }
+
+        .location-status.ok {
+            color: #22c55e;
+        }
+
+        .location-status.error {
+            color: #f97316;
+        }
+
+        /* FOOTER */
+
+        .page-footer {
+            margin-top: auto;
+            padding: 0.75rem 1rem 1.2rem;
+            font-size: 0.75rem;
+            color: var(--text-muted);
+            text-align: center;
+        }
+
+        .page-footer span {
+            color: #e5e7eb;
+        }
+    </style>
+
+    {% block extra_head %}{% endblock %}
 </head>
 <body>
-  <header>
-    <h1>Smart Accident Monitor</h1>
-    <nav>
-      <a href="/">Home</a> |
-      <a href="/register">Register</a> |
-      <a href="/upload-incident">Upload Accident Video</a> |
-      <a href="/add-camera">Register CCTV Camera</a>
-    </nav>
-    <hr>
-  </header>
+<div class="app-shell">
+    <header class="nav">
+        <div class="nav-inner">
+            <div class="nav-left">
+                <div class="nav-logo">AM</div>
+                <div class="nav-title">
+                    <div class="nav-title-main">Smart Accident Monitor</div>
+                    <div class="nav-title-sub">Cloud-only accident detection & alerting</div>
+                </div>
+            </div>
+            <nav class="nav-links">
+                <a href="/" class="nav-link">Overview</a>
+                <a href="/register" class="nav-link">Register user</a>
+                <a href="/upload-incident" class="nav-link nav-link-primary">Upload incident</a>
+                <a href="/add-camera" class="nav-link">Register CCTV</a>
+            </nav>
+        </div>
+    </header>
 
-  <main>
-    {% block content %}{% endblock %}
-  </main>
+    <main class="page-main">
+        <div class="page-inner">
+            <section class="content-card">
+                <div class="content-header">
+                    {% block header %}
+                    <div class="badge">
+                        <span class="badge-dot"></span>
+                        Live cloud deployment connected to Supabase
+                    </div>
+                    <h1 class="content-title">Real-time road incident capture</h1>
+                    <p class="content-subtitle">
+                        Upload accident videos directly from your phone, auto-capture GPS, and let the
+                        backend do the heavy lifting: classification, severity scoring, and emergency alerts.
+                    </p>
+                    {% endblock %}
+                </div>
+
+                {% block content %}{% endblock %}
+            </section>
+
+            <aside class="sidebar-card">
+                <div class="sidebar-title">System snapshot</div>
+
+                <div>
+                    <span class="pill pill-success">Cloud backend healthy</span>
+                    <span class="pill pill-muted">Supabase · Render · FastAPI</span>
+                </div>
+
+                <ul class="sidebar-list">
+                    <li>
+                        <span class="sidebar-dot"></span>
+                        <span>All incident videos are stored in the cloud. No local processing.</span>
+                    </li>
+                    <li>
+                        <span class="sidebar-dot"></span>
+                        <span>Location defaults to the GPS of the user’s device at upload time.</span>
+                    </li>
+                    <li>
+                        <span class="sidebar-dot"></span>
+                        <span>CCTV owners can register cameras once; monitoring runs centrally.</span>
+                    </li>
+                    <li>
+                        <span class="sidebar-dot"></span>
+                        <span>Next phase: background severity classification + emergency alerts.</span>
+                    </li>
+                </ul>
+
+                <div class="sidebar-footer">
+                    <strong>Tip:</strong> open this site on your phone and try uploading a short sample
+                    accident clip. You should not have to type any latitude/longitude yourself.
+                </div>
+            </aside>
+        </div>
+    </main>
+
+    <footer class="page-footer">
+        <span>Smart Accident Monitor</span> · Single deployment monitoring many roads and cameras.
+    </footer>
+</div>
+
+{% block extra_scripts %}{% endblock %}
 </body>
 </html>

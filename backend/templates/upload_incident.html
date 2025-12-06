@@ -9,8 +9,9 @@
 </div>
 <h1 class="content-title">Upload an accident video with auto location</h1>
 <p class="content-subtitle">
-    Open this page on your phone, allow camera + location access, and either record the incident
-    live or pick it from your gallery. Latitude and longitude are auto-captured from your device.
+    Open this page on your phone, allow camera + location access, and either record the incident live
+    or pick it from your gallery. Once we capture a valid location on this device, we reuse it so you
+    don’t lose data on refresh.
 </p>
 {% endblock %}
 
@@ -51,7 +52,7 @@
             </button>
         </div>
 
-        <!-- Camera-first input (can force camera on some devices) -->
+        <!-- Camera-first input -->
         <input
             class="form-input"
             id="video-camera"
@@ -61,7 +62,7 @@
             required
         >
 
-        <!-- Gallery input (normal picker) -->
+        <!-- Gallery input -->
         <input
             class="form-input"
             id="video-gallery"
@@ -70,31 +71,40 @@
             style="display:none; margin-top:0.55rem;"
         >
 
-        <!-- Hidden real field name FastAPI expects -->
-        <input type="hidden" id="video-active-flag">
-
         <p class="form-hint">
             <strong>Camera mode:</strong> opens your camera directly to record a new clip.<br>
-            <strong>Gallery mode:</strong> opens your file/gallery picker to select an existing video.
+            <strong>Gallery mode:</strong> opens your gallery/file picker to select an existing video.
         </p>
     </div>
 
-    <!-- Hidden location fields: auto-filled from GPS -->
+    <!-- Hidden location fields: always sent to backend -->
     <input type="hidden" id="location_lat" name="location_lat">
     <input type="hidden" id="location_lng" name="location_lng">
 
     <div class="form-row">
         <label class="form-label">
             Location
-            <span>(auto-captured from your device)</span>
+            <span>(auto-captured from your device & cached)</span>
         </label>
-        <div class="location-status loading" id="location-status">
-            Requesting GPS from your device...
+
+        <div style="display:flex; align-items:center; gap:0.6rem; flex-wrap:wrap;">
+            <div class="location-status loading" id="location-status">
+                Initializing location...
+            </div>
+            <button
+                type="button"
+                class="btn-primary"
+                id="retry-location-btn"
+                style="padding-inline:0.9rem; font-size:0.75rem; background:linear-gradient(135deg,#4b5563,#1f2937); box-shadow:none;"
+            >
+                Refresh location
+            </button>
         </div>
+
         <p class="form-hint" id="location-details" style="display:none;"></p>
         <p class="form-hint">
-            You must allow <strong>location access</strong> in your browser. If you deny it, the
-            incident cannot be submitted because severity and routing depend on GPS.
+            The last good location from this device is remembered locally. If GPS is slow or times out,
+            we still use your previously captured coordinates so you don’t lose data.
         </p>
     </div>
 
@@ -124,7 +134,6 @@
         const cameraInput = document.getElementById("video-camera");
         const galleryInput = document.getElementById("video-gallery");
 
-        // We will dynamically assign name="video" only to the active input
         function setMode(mode) {
             if (mode === "camera") {
                 cameraBtn.style.background = "linear-gradient(135deg, #2563eb, #4f46e5)";
@@ -168,13 +177,16 @@
         // Default mode: camera
         setMode("camera");
 
-        // --- GEOLOCATION & SUBMIT CONTROL ---
+        // --- GEOLOCATION & CACHING ---
 
         const statusEl = document.getElementById("location-status");
         const detailsEl = document.getElementById("location-details");
+        const retryBtn = document.getElementById("retry-location-btn");
         const latInput = document.getElementById("location_lat");
         const lngInput = document.getElementById("location_lng");
         const submitBtn = document.getElementById("submit-btn");
+
+        const STORAGE_KEY = "sam_last_location";
 
         function setStatusLoading(message) {
             statusEl.textContent = message;
@@ -202,49 +214,113 @@
             }
         }
 
-        // Initial state
-        enableSubmit(false);
-        setStatusLoading("Requesting GPS from your device...");
+        function applyLocation(lat, lng, sourceLabel) {
+            latInput.value = lat.toString();
+            lngInput.value = lng.toString();
 
-        if (!navigator.geolocation) {
-            setStatusError("This browser does not support location. Use a modern mobile browser.");
-            enableSubmit(false);
-            return;
+            detailsEl.style.display = "block";
+            detailsEl.textContent =
+                "Lat: " + lat.toFixed(6) + " · Lng: " + lng.toFixed(6) +
+                (sourceLabel ? " (" + sourceLabel + ")" : "");
+
+            setStatusOk("Location ready.");
+            enableSubmit(true);
         }
 
-        navigator.geolocation.getCurrentPosition(
-            function (position) {
-                const lat = position.coords.latitude;
-                const lng = position.coords.longitude;
-
-                latInput.value = lat.toString();
-                lngInput.value = lng.toString();
-
-                setStatusOk("Location captured from device.");
-                detailsEl.style.display = "block";
-                detailsEl.textContent = "Lat: " + lat.toFixed(6) + " · Lng: " + lng.toFixed(6);
-
-                enableSubmit(true);
-            },
-            function (error) {
-                console.warn("Geolocation error:", error);
-                let msg = "Unable to retrieve location.";
-                if (error.code === error.PERMISSION_DENIED) {
-                    msg = "Location permission denied. Allow location to submit incidents.";
-                } else if (error.code === error.POSITION_UNAVAILABLE) {
-                    msg = "Location is unavailable. Try again in an open area.";
-                } else if (error.code === error.TIMEOUT) {
-                    msg = "Location request timed out. Try again.";
-                }
-                setStatusError(msg);
-                enableSubmit(false);
-            },
-            {
-                enableHighAccuracy: true,
-                timeout: 10000,
-                maximumAge: 5000
+        function saveLocation(lat, lng) {
+            try {
+                const payload = { lat: lat, lng: lng, ts: Date.now() };
+                localStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
+            } catch (e) {
+                console.warn("Failed to persist location:", e);
             }
-        );
+        }
+
+        function loadStoredLocation() {
+            try {
+                const raw = localStorage.getItem(STORAGE_KEY);
+                if (!raw) return null;
+                const parsed = JSON.parse(raw);
+                if (typeof parsed.lat !== "number" || typeof parsed.lng !== "number") {
+                    return null;
+                }
+                return parsed;
+            } catch (e) {
+                console.warn("Failed to read stored location:", e);
+                return null;
+            }
+        }
+
+        function requestLocation() {
+            if (!navigator.geolocation) {
+                setStatusError("This browser does not support location. Use a modern mobile browser.");
+                if (!latInput.value || !lngInput.value) {
+                    enableSubmit(false);
+                }
+                return;
+            }
+
+            setStatusLoading("Requesting GPS from your device...");
+            retryBtn.disabled = true;
+
+            navigator.geolocation.getCurrentPosition(
+                function (position) {
+                    const lat = position.coords.latitude;
+                    const lng = position.coords.longitude;
+
+                    saveLocation(lat, lng);
+                    applyLocation(lat, lng, "live GPS");
+
+                    retryBtn.disabled = false;
+                },
+                function (error) {
+                    console.warn("Geolocation error:", error);
+                    let msg = "Unable to retrieve location.";
+                    if (error.code === error.PERMISSION_DENIED) {
+                        msg = "Location permission denied. Allow location to submit incidents.";
+                    } else if (error.code === error.POSITION_UNAVAILABLE) {
+                        msg = "Location is unavailable. Try again in an open area.";
+                    } else if (error.code === error.TIMEOUT) {
+                        msg = "Location request timed out. Try again.";
+                    }
+                    setStatusError(msg);
+                    retryBtn.disabled = false;
+
+                    // If we already have a stored location, keep using it
+                    if (latInput.value && lngInput.value) {
+                        setStatusOk("Using last known location from device.");
+                        enableSubmit(true);
+                    } else {
+                        enableSubmit(false);
+                    }
+                },
+                {
+                    enableHighAccuracy: true,
+                    timeout: 30000,      // 30 seconds instead of 10
+                    maximumAge: 600000   // allow cached location up to 10 minutes old
+                }
+            );
+        }
+
+        retryBtn.addEventListener("click", function () {
+            requestLocation();
+        });
+
+        // Initial logic on page load:
+        // 1) Try to use stored location
+        // 2) Also attempt a fresh GPS call (user can click Refresh)
+
+        const stored = loadStoredLocation();
+        if (stored) {
+            applyLocation(stored.lat, stored.lng, "stored from previous session");
+            setStatusOk("Using last known location from this device.");
+        } else {
+            setStatusLoading("No stored location. Requesting GPS from your device...");
+            enableSubmit(false);
+        }
+
+        // Kick off an async refresh attempt (user can also press Refresh manually)
+        requestLocation();
     })();
 </script>
 {% endblock %}

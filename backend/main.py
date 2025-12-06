@@ -3,7 +3,7 @@
 import os
 import shutil
 from datetime import datetime
-from typing import List
+from typing import List, Optional
 
 from fastapi import (
     FastAPI,
@@ -11,7 +11,6 @@ from fastapi import (
     BackgroundTasks,
     UploadFile,
     File,
-    Form,
     Depends,
 )
 from fastapi.responses import HTMLResponse
@@ -64,9 +63,7 @@ def classify_severity_stub(video_path: str) -> tuple[str, str]:
 
     Replace this later with a real ML model loading from disk / cloud.
     """
-    # TODO: Implement real ML. For now, simple deterministic behavior.
-    # Example policy:
-    # - Treat all as MINOR to avoid spam
+    # For now, avoid noise: treat everything as MINOR / generic
     severity = "MINOR"
     accident_type = "generic"
     return severity, accident_type
@@ -82,7 +79,7 @@ def process_incident_video(incident_id: int) -> None:
     """
     db: Session = SessionLocal()
     try:
-        incident: Incident | None = (
+        incident: Optional[Incident] = (
             db.query(Incident).filter(Incident.id == incident_id).first()
         )
         if not incident:
@@ -113,7 +110,7 @@ def process_incident_video(incident_id: int) -> None:
 
 
 # ------------------------------------------------------------------------------
-# Simple homepage (you can beautify later)
+# Overview / home
 # ------------------------------------------------------------------------------
 
 @app.get("/", response_class=HTMLResponse)
@@ -142,7 +139,7 @@ async def read_root(request: Request, db: Session = Depends(get_db)):
 
 
 # ------------------------------------------------------------------------------
-# Upload incident page (your Uber-style map UI already lives in this template)
+# Upload incident page (Uber-style map flow)
 # ------------------------------------------------------------------------------
 
 @app.get("/upload-incident", response_class=HTMLResponse)
@@ -154,7 +151,14 @@ async def get_upload_incident(request: Request):
     - Use my current location
     - User must pick location before submit
     """
-    return templates.TemplateResponse("upload_incident.html", {"request": request})
+    return templates.TemplateResponse(
+        "upload_incident.html",
+        {
+            "request": request,
+            "message": None,
+            "error": None,
+        },
+    )
 
 
 # ------------------------------------------------------------------------------
@@ -165,9 +169,9 @@ async def get_upload_incident(request: Request):
 async def create_incident(
     background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
-    lat: float = Form(...),
-    lng: float = Form(...),
-    user_id: int = Form(...),  # adjust if you use session auth
+    lat: float = Depends(),
+    lng: float = Depends(),
+    user_id: int = Depends(),
     db: Session = Depends(get_db),
 ):
     """
@@ -212,7 +216,7 @@ async def create_incident(
 
 
 # ------------------------------------------------------------------------------
-# Alerts listing (basic API for now, you can convert to HTML dashboard later)
+# Alerts listing (basic JSON API)
 # ------------------------------------------------------------------------------
 
 @app.get("/alerts")
@@ -233,3 +237,194 @@ async def list_alerts(db: Session = Depends(get_db)):
         }
         for a in alerts
     ]
+
+
+# ------------------------------------------------------------------------------
+# User registration (RESTORES /register)
+# ------------------------------------------------------------------------------
+
+@app.get("/register", response_class=HTMLResponse)
+async def get_register_user(request: Request):
+    """
+    Render the registration form.
+    """
+    return templates.TemplateResponse(
+        "register.html",
+        {
+            "request": request,
+            "error": None,
+            "success": None,
+        },
+    )
+
+
+@app.post("/register", response_class=HTMLResponse)
+async def post_register_user(request: Request, db: Session = Depends(get_db)):
+    """
+    Handle user registration form POST.
+    We read the form generically to be robust against field-name changes.
+    """
+    form = await request.form()
+
+    full_name = form.get("full_name") or form.get("name") or ""
+    email = (form.get("email") or "").strip()
+    password = form.get("password") or form.get("pass") or ""
+    role_raw = form.get("role") or form.get("user_type") or "user"
+
+    if not email or not password:
+        return templates.TemplateResponse(
+            "register.html",
+            {
+                "request": request,
+                "error": "Email and password are required.",
+                "success": None,
+            },
+        )
+
+    # Normalize role value
+    role_raw_lower = role_raw.lower()
+    if "cctv" in role_raw_lower:
+        role = "cctv_owner"
+    else:
+        role = "user"
+
+    # Check duplicate email
+    existing = db.query(User).filter(User.email == email).first()
+    if existing:
+        return templates.TemplateResponse(
+            "register.html",
+            {
+                "request": request,
+                "error": "A user with this email already exists.",
+                "success": None,
+            },
+        )
+
+    user = User(
+        email=email,
+        password_hash=password,  # plain-text for now; prototype only
+        role=role,
+    )
+    db.add(user)
+    db.commit()
+    db.refresh(user)
+
+    success_msg = (
+        f"User created successfully with ID {user.id} "
+        f"({role}). Use this ID to link incidents or CCTV cameras."
+    )
+
+    # full_name is currently not stored; we can add a column later if needed.
+    return templates.TemplateResponse(
+        "register.html",
+        {
+            "request": request,
+            "error": None,
+            "success": success_msg,
+        },
+    )
+
+
+# ------------------------------------------------------------------------------
+# CCTV registration (RESTORES /add-camera)
+# ------------------------------------------------------------------------------
+
+@app.get("/add-camera", response_class=HTMLResponse)
+async def get_add_camera(request: Request):
+    """
+    Render CCTV registration form.
+    """
+    return templates.TemplateResponse(
+        "add_camera.html",
+        {
+            "request": request,
+            "error": None,
+            "success": None,
+        },
+    )
+
+
+@app.post("/add-camera", response_class=HTMLResponse)
+async def post_add_camera(request: Request, db: Session = Depends(get_db)):
+    """
+    Handle CCTV camera registration form POST.
+    """
+    form = await request.form()
+
+    owner_id_raw = form.get("owner_id") or form.get("owner_user_id") or ""
+    name = (form.get("name") or form.get("camera_name") or "").strip()
+    rtsp_url = (form.get("rtsp_url") or form.get("rtsp") or "").strip()
+    lat_raw = form.get("lat") or form.get("latitude") or ""
+    lng_raw = form.get("lng") or form.get("longitude") or ""
+
+    # Basic validation
+    try:
+        owner_id = int(owner_id_raw)
+    except (TypeError, ValueError):
+        return templates.TemplateResponse(
+            "add_camera.html",
+            {
+                "request": request,
+                "error": "Invalid owner user ID.",
+                "success": None,
+            },
+        )
+
+    if not name or not rtsp_url or not lat_raw or not lng_raw:
+        return templates.TemplateResponse(
+            "add_camera.html",
+            {
+                "request": request,
+                "error": "All fields are required.",
+                "success": None,
+            },
+        )
+
+    try:
+        lat = float(lat_raw)
+        lng = float(lng_raw)
+    except ValueError:
+        return templates.TemplateResponse(
+            "add_camera.html",
+            {
+                "request": request,
+                "error": "Latitude and longitude must be numeric.",
+                "success": None,
+            },
+        )
+
+    owner = db.query(User).filter(User.id == owner_id).first()
+    if not owner:
+        return templates.TemplateResponse(
+            "add_camera.html",
+            {
+                "request": request,
+                "error": "Owner user ID not found. Create the CCTV owner user first.",
+                "success": None,
+            },
+        )
+
+    camera = Camera(
+        owner_id=owner_id,
+        name=name,
+        rtsp_url=rtsp_url,
+        location_lat=lat,
+        location_lng=lng,
+    )
+    db.add(camera)
+    db.commit()
+    db.refresh(camera)
+
+    success_msg = (
+        f"Camera '{camera.name}' registered with ID {camera.id} "
+        f"for owner user {owner_id}."
+    )
+
+    return templates.TemplateResponse(
+        "add_camera.html",
+        {
+            "request": request,
+            "error": None,
+            "success": success_msg,
+        },
+    )

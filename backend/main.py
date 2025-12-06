@@ -3,15 +3,16 @@
 import os
 import shutil
 from datetime import datetime
-from typing import List
+from typing import List, Optional
 
 from fastapi import (
     FastAPI,
     Request,
     BackgroundTasks,
     UploadFile,
-    Form,
+    File,
     Depends,
+    Form,
 )
 from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -22,8 +23,9 @@ from sqlalchemy.orm import Session
 from .db import get_db, SessionLocal
 from .models import User, Camera, Incident, Alert
 
+
 # ------------------------------------------------------------------------------
-# FastAPI app + Jinja + static
+# Core app / static / templates
 # ------------------------------------------------------------------------------
 
 app = FastAPI(title="Smart Accident Monitor")
@@ -40,17 +42,14 @@ templates = Jinja2Templates(directory=TEMPLATES_DIR)
 
 
 # ------------------------------------------------------------------------------
-# Background ML classifier (stub) + processing pipeline
+# Stub ML classifier + background worker
 # ------------------------------------------------------------------------------
 
 def classify_severity_stub(video_path: str) -> tuple[str, str]:
     """
-    Placeholder ML classifier.
-
-    Returns (severity, accident_type).
-    Replace this later with a real ML model.
+    Stub ML classifier.
+    For now, always returns MINOR so no alerts are generated.
     """
-    # Current policy: treat all as MINOR to avoid spam.
     severity = "MINOR"
     accident_type = "generic"
     return severity, accident_type
@@ -59,15 +58,14 @@ def classify_severity_stub(video_path: str) -> tuple[str, str]:
 def process_incident_video(incident_id: int) -> None:
     """
     Background task:
-    - Fetch incident
-    - Run classifier (stub for now)
-    - Update DB with severity + accident_type
-    - Create alerts for MAJOR / SEVERE
+    - Load Incident
+    - Run stub classifier
+    - Update severity/processed fields
+    - Create Alert only for MAJOR/SEVERE (will not happen with stub)
     """
-
     db: Session = SessionLocal()
     try:
-        incident: Incident | None = (
+        incident: Optional[Incident] = (
             db.query(Incident).filter(Incident.id == incident_id).first()
         )
         if not incident:
@@ -98,7 +96,7 @@ def process_incident_video(incident_id: int) -> None:
 
 
 # ------------------------------------------------------------------------------
-# HOME / OVERVIEW
+# Home / overview
 # ------------------------------------------------------------------------------
 
 @app.get("/", response_class=HTMLResponse)
@@ -127,7 +125,7 @@ async def read_root(request: Request, db: Session = Depends(get_db)):
 
 
 # ------------------------------------------------------------------------------
-# USER REGISTRATION
+# User registration
 # ------------------------------------------------------------------------------
 
 @app.get("/register", response_class=HTMLResponse)
@@ -162,12 +160,11 @@ async def post_register(
 
 
 # ------------------------------------------------------------------------------
-# CCTV CAMERA REGISTRATION
+# CCTV camera registration
 # ------------------------------------------------------------------------------
 
 @app.get("/add-camera", response_class=HTMLResponse)
 async def get_add_camera(request: Request, db: Session = Depends(get_db)):
-    # Optional: pass users to template for a dropdown
     users: List[User] = db.query(User).all()
 
     return templates.TemplateResponse(
@@ -207,17 +204,16 @@ async def post_add_camera(
 
 
 # ------------------------------------------------------------------------------
-# UPLOAD INCIDENT PAGE (Uber-style UI)
+# Upload incident page (Uber-style UI)
 # ------------------------------------------------------------------------------
 
 @app.get("/upload-incident", response_class=HTMLResponse)
 async def get_upload_incident(request: Request):
     """
     Renders upload_incident.html which already has:
-    - Record Now / Choose from Gallery
+    - Record / Gallery
     - Leaflet map
     - 'Use my current location'
-    DO NOT touch the frontend logic; only keep backend endpoints stable.
     """
     return templates.TemplateResponse(
         "upload_incident.html",
@@ -226,37 +222,30 @@ async def get_upload_incident(request: Request):
 
 
 # ------------------------------------------------------------------------------
-# SHARED INCIDENT CREATION HANDLER
+# Shared incident creation handler
 # ------------------------------------------------------------------------------
 
 async def _handle_incident_create(
     request: Request,
     background_tasks: BackgroundTasks,
     db: Session,
+    video_file: Optional[UploadFile],
 ):
     """
-    Central handler that:
-    - reads multipart form data
-    - saves video under /static/uploads
-    - inserts Incident row with severity=PENDING
-    - kicks background worker to classify and update severity
-    This is wired to multiple POST routes so frontend URL mismatches
-    don't cause 404 "detail: Not Found".
+    Central logic:
+    - Expects an UploadFile from any of several field names.
+    - Reads lat/lng and user_id from the form.
+    - Saves file and inserts Incident row.
+    - Triggers background worker.
     """
 
-    form = await request.form()
-
-    # File field: try common names
-    file_obj = (
-        form.get("file")
-        or form.get("video")
-        or form.get("upload")
-    )
-    if not isinstance(file_obj, UploadFile):
+    if video_file is None:
         return JSONResponse(
             status_code=status.HTTP_400_BAD_REQUEST,
             content={"detail": "Video file is required"},
         )
+
+    form = await request.form()
 
     # Location fields
     raw_lat = form.get("lat") or form.get("location_lat")
@@ -277,7 +266,7 @@ async def _handle_incident_create(
             content={"detail": "Invalid latitude/longitude"},
         )
 
-    # user_id (required because DB schema has NOT NULL)
+    # user_id (FK to users.id)
     raw_user_id = form.get("user_id")
     if raw_user_id is None or raw_user_id == "":
         return JSONResponse(
@@ -293,16 +282,16 @@ async def _handle_incident_create(
             content={"detail": "user_id must be an integer"},
         )
 
-    # Persist file to disk (under /static/uploads so it can be served)
-    filename = f"{datetime.utcnow().strftime('%Y%m%d%H%M%S')}_{file_obj.filename}"
+    # Save file under /static/uploads
+    filename = f"{datetime.utcnow().strftime('%Y%m%d%H%M%S')}_{video_file.filename}"
     file_path = os.path.join(UPLOAD_DIR, filename)
 
     with open(file_path, "wb") as buffer:
-        shutil.copyfileobj(file_obj.file, buffer)
+        shutil.copyfileobj(video_file.file, buffer)
 
     relative_video_path = f"/static/uploads/{filename}"
 
-    # Create Incident row with PENDING severity; worker will flip to MINOR
+    # Insert Incident row with placeholder severity; worker will update it
     incident = Incident(
         user_id=user_id,
         video_path=relative_video_path,
@@ -329,44 +318,62 @@ async def _handle_incident_create(
 
 
 # ------------------------------------------------------------------------------
-# INCIDENT CREATION ENDPOINTS (multiple paths to avoid 404)
+# Incident creation endpoint(s) – multiple paths, many field names
 # ------------------------------------------------------------------------------
 
 @app.post("/incidents")
+@app.post("/api/incidents")
+@app.post("/upload-incident")
 async def create_incident(
     request: Request,
     background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
+
+    # Accept multiple possible video field names from the frontend:
+    file: UploadFile = File(None),
+    video: UploadFile = File(None),
+    upload: UploadFile = File(None),
+    incident_video: UploadFile = File(None),
 ):
-    return await _handle_incident_create(request, background_tasks, db)
+    """
+    We accept several possible video field names:
+    - file
+    - video
+    - upload
+    - incident_video
 
-
-@app.post("/api/incidents")
-async def create_incident_api(
-    request: Request,
-    background_tasks: BackgroundTasks,
-    db: Session = Depends(get_db),
-):
-    # In case frontend is calling /api/incidents
-    return await _handle_incident_create(request, background_tasks, db)
-
-
-@app.post("/upload-incident")
-async def create_incident_legacy(
-    request: Request,
-    background_tasks: BackgroundTasks,
-    db: Session = Depends(get_db),
-):
-    # In case the form or JS posts back to /upload-incident
-    return await _handle_incident_create(request, background_tasks, db)
+    Whichever is non-null will be used. This fixes your
+    "Video file is required" error even if the HTML uses
+    a slightly different name.
+    """
+    video_file = file or video or upload or incident_video
+    return await _handle_incident_create(request, background_tasks, db, video_file)
 
 
 # ------------------------------------------------------------------------------
-# ALERTS LISTING (JSON API)
+# Alerts listing (JSON)
 # ------------------------------------------------------------------------------
 
-@app.get("/alerts")
-async def list_alerts(db: Session = Depends(get_db)):
+@app.get("/alerts", response_class=HTMLResponse)
+async def get_alerts(request: Request, db: Session = Depends(get_db)):
+    alerts: List[Alert] = (
+        db.query(Alert)
+        .order_by(Alert.created_at.desc())
+        .limit(50)
+        .all()
+    )
+
+    return templates.TemplateResponse(
+        "alerts.html",
+        {
+            "request": request,
+            "alerts": alerts,
+        },
+    )
+
+
+@app.get("/api/alerts")
+async def api_alerts(db: Session = Depends(get_db)):
     alerts: List[Alert] = (
         db.query(Alert)
         .order_by(Alert.created_at.desc())
@@ -380,7 +387,9 @@ async def list_alerts(db: Session = Depends(get_db)):
             "incident_id": a.incident_id,
             "severity": a.severity,
             "message": a.message,
-            "created_at": a.created_at.isoformat(),
+            "created_at": a.created_at.isoformat()
+            if a.created_at
+            else None,
         }
         for a in alerts
     ]

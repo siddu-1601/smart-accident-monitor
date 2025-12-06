@@ -11,6 +11,7 @@ from fastapi import (
     BackgroundTasks,
     UploadFile,
     File,
+    Form,
     Depends,
 )
 from fastapi.responses import HTMLResponse
@@ -169,9 +170,9 @@ async def get_upload_incident(request: Request):
 async def create_incident(
     background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
-    lat: float = Depends(),
-    lng: float = Depends(),
-    user_id: int = Depends(),
+    lat: float = Form(...),
+    lng: float = Form(...),
+    user_id: int = Form(...),  # provided by the form; for now, no auth
     db: Session = Depends(get_db),
 ):
     """

@@ -9,8 +9,8 @@
 </div>
 <h1 class="content-title">Upload an accident video with auto location</h1>
 <p class="content-subtitle">
-    Open this page on your phone, allow location access, and upload the incident video. Latitude and
-    longitude are auto-captured from your device — no manual entry.
+    Open this page on your phone, allow camera + location access, and record the incident live.
+    Latitude and longitude are auto-captured from your device — no manual coordinates.
 </p>
 {% endblock %}
 
@@ -30,9 +30,19 @@
 <form method="post" enctype="multipart/form-data" class="form" id="incident-form">
     <div class="form-row">
         <label class="form-label" for="video">Accident video</label>
-        <input class="form-input" id="video" name="video" type="file" accept="video/*" required>
+        <!-- camera-first UX: on mobile, this opens the camera directly in video mode -->
+        <input
+            class="form-input"
+            id="video"
+            name="video"
+            type="file"
+            accept="video/*"
+            capture="environment"
+            required
+        >
         <p class="form-hint">
-            Upload a short clip (few seconds is enough) showing the incident clearly. This is what the model will use later.
+            On mobile: tap this field to <strong>record a new video</strong> using your camera, or select
+            an existing clip from gallery. On desktop: you’ll see a normal file picker.
         </p>
     </div>
 
@@ -50,13 +60,19 @@
         </div>
         <p class="form-hint" id="location-details" style="display:none;"></p>
         <p class="form-hint">
-            You must allow location access in your browser. If you deny it, the incident cannot be submitted because severity and routing depend on GPS.
+            You must allow <strong>location access</strong> in your browser. If you deny it, the incident
+            cannot be submitted because severity and routing depend on GPS.
         </p>
     </div>
 
     <div class="form-row">
         <label class="form-label" for="description">Additional description <span>(optional)</span></label>
-        <textarea class="form-textarea" id="description" name="description" placeholder="Describe what happened, visible injuries, blocked lanes, etc."></textarea>
+        <textarea
+            class="form-textarea"
+            id="description"
+            name="description"
+            placeholder="Describe what happened, visible injuries, blocked lanes, etc."
+        ></textarea>
     </div>
 
     <button type="submit" class="btn-primary" id="submit-btn" disabled>

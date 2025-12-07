@@ -47,12 +47,12 @@ def _infer_class_to_idx_from_checkpoint(checkpoint: dict) -> dict[str, int]:
     Try to read class_to_idx from checkpoint; if missing, fall back
     to the training-time folder order you used.
 
-    Your dataset structure was:
+    Dataset structure:
         dataset/minor
         dataset/major
         dataset/severe
 
-    ImageFolder will sort class names alphabetically:
+    ImageFolder sorts class names alphabetically:
         ['major', 'minor', 'severe'] -> indices 0,1,2
 
     So default mapping = {"major": 0, "minor": 1, "severe": 2}
@@ -128,21 +128,32 @@ def _resolve_video_path(video_path: str) -> str:
     """
     Convert DB-stored path (e.g. '/static/uploads/xyz.mp4')
     into an actual filesystem path on the server.
+
+    IMPORTANT:
+    - Files are saved to backend/static/uploads/...
+    - The DB stores '/static/uploads/filename.mp4'
+    - BASE_DIR == backend/, so we must resolve to:
+        BASE_DIR/static/uploads/filename.mp4
     """
-    # Absolute path on disk
+    # If it's already an absolute existing path, just use it
     if os.path.isabs(video_path) and os.path.exists(video_path):
         return video_path
 
-    # Common case: stored as '/static/uploads/filename'
-    if video_path.startswith("/"):
-        project_root = os.path.dirname(BASE_DIR)  # parent of backend/
-        candidate = os.path.join(project_root, video_path.lstrip("/"))
+    # Normal case in this app: '/static/uploads/filename'
+    if video_path.startswith("/static/"):
+        candidate = os.path.join(BASE_DIR, video_path.lstrip("/"))
         if os.path.exists(candidate):
             return candidate
 
-    # Fallback: treat as relative to project root
+    # Also support 'static/uploads/filename' (no leading slash)
+    if video_path.startswith("static/"):
+        candidate = os.path.join(BASE_DIR, video_path)
+        if os.path.exists(candidate):
+            return candidate
+
+    # Fallback: treat as relative to project root (parent of backend/)
     project_root = os.path.dirname(BASE_DIR)
-    candidate = os.path.join(project_root, video_path)
+    candidate = os.path.join(project_root, video_path.lstrip("/"))
     return candidate
 
 
@@ -212,7 +223,7 @@ def predict_severity(video_path: str) -> Tuple[str, str]:
     2. Sample frames.
     3. Run model on frames as a batch.
     4. Aggregate per-class probabilities across frames with MAX (worst frame).
-    5. Let the model decide via argmax – no hardcoding.
+    5. Let the model decide via argmax.
 
     Returns:
         severity: "MINOR" | "MAJOR" | "SEVERE"
@@ -232,7 +243,7 @@ def predict_severity(video_path: str) -> Tuple[str, str]:
         probs = torch.softmax(outputs, dim=1)  # (N, num_classes)
         max_probs, _ = probs.max(dim=0)        # (num_classes,)
 
-    # Raw model decision (same logic you saw in debug_severity)
+    # Raw model decision (same logic as debug_severity)
     pred_idx = int(max_probs.argmax().item())
     raw_class_name = idx_to_class.get(pred_idx, "minor").lower()
 
@@ -243,12 +254,12 @@ def predict_severity(video_path: str) -> Tuple[str, str]:
     }
     severity = severity_map.get(raw_class_name, "MINOR")
 
-    # Optional log for Render
+    # Optional log for Render – helps verify pipeline
     p_minor = float(max_probs[class_to_idx["minor"]].item())
     p_major = float(max_probs[class_to_idx["major"]].item())
     p_severe = float(max_probs[class_to_idx["severe"]].item())
     print(
-        f"[severity] video={video_path} "
+        f"[severity] video={video_path} resolved={real_path} "
         f"class_to_idx={class_to_idx} "
         f"p_minor={p_minor:.3f} p_major={p_major:.3f} p_severe={p_severe:.3f} "
         f"-> {severity}"

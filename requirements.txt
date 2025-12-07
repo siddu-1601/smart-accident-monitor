@@ -6,4 +6,8 @@ psycopg2-binary
 python-multipart
 python-dotenv
 psycopg[binary]
+torch
+torchvision
+opencv-python-headless
+
 

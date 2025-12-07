@@ -47,13 +47,13 @@ def _infer_class_to_idx_from_checkpoint(checkpoint: dict) -> dict[str, int]:
     Try to read class_to_idx from checkpoint; if missing, fall back
     to the training-time folder order you used.
 
-    Dataset structure:
+    Your dataset structure was:
         dataset/minor
         dataset/major
         dataset/severe
 
-    ImageFolder sorts class names alphabetically:
-        ['major', 'minor', 'severe'] -> indices 0, 1, 2
+    ImageFolder will sort class names alphabetically:
+        ['major', 'minor', 'severe'] -> indices 0,1,2
 
     So default mapping = {"major": 0, "minor": 1, "severe": 2}
     """
@@ -111,7 +111,6 @@ def _load_model() -> tuple[torch.nn.Module, dict[str, int]]:
     in_features = model.fc.in_features
     model.fc = nn.Linear(in_features, num_classes)
 
-    # Load weights from checkpoint (no backbone.* prefix)
     model.load_state_dict(state_dict)
     model.to(device)
     model.eval()
@@ -209,16 +208,11 @@ def _extract_frames(video_fs_path: str, num_frames: int = 16) -> torch.Tensor:
 
 def predict_severity(video_path: str) -> Tuple[str, str]:
     """
-    Core entrypoint used by the FastAPI background worker.
-
-    Flow:
     1. Resolve video path on disk.
     2. Sample frames.
     3. Run model on frames as a batch.
-    4. Aggregate probabilities across frames.
-       - MAX aggregation (worst frame wins).
-    5. Apply rule-based thresholds on top of model outputs.
-    6. Map to severity class.
+    4. Aggregate per-class probabilities across frames with MAX (worst frame).
+    5. Let the model decide via argmax – no hardcoding.
 
     Returns:
         severity: "MINOR" | "MAJOR" | "SEVERE"
@@ -226,13 +220,8 @@ def predict_severity(video_path: str) -> Tuple[str, str]:
     """
     model, class_to_idx = _load_model()
 
-    # Make sure expected labels exist
-    if not {"minor", "major", "severe"}.issubset(class_to_idx.keys()):
-        raise RuntimeError(f"class_to_idx missing expected keys: {class_to_idx}")
-
-    idx_minor = class_to_idx["minor"]
-    idx_major = class_to_idx["major"]
-    idx_severe = class_to_idx["severe"]
+    # Inverse mapping for readability: {idx: "minor"/"major"/"severe"}
+    idx_to_class = {v: k for k, v in class_to_idx.items()}
 
     real_path = _resolve_video_path(video_path)
     frames = _extract_frames(real_path)  # (N, C, H, W)
@@ -241,37 +230,26 @@ def predict_severity(video_path: str) -> Tuple[str, str]:
     with torch.no_grad():
         outputs = model(frames)                # (N, num_classes)
         probs = torch.softmax(outputs, dim=1)  # (N, num_classes)
-
-        # MAX aggregation across time: treat severity as the worst observed frame
         max_probs, _ = probs.max(dim=0)        # (num_classes,)
 
-    # Align probabilities to semantic labels using class_to_idx
-    p_minor = float(max_probs[idx_minor].item())
-    p_major = float(max_probs[idx_major].item())
-    p_severe = float(max_probs[idx_severe].item())
+    # Raw model decision (same logic you saw in debug_severity)
+    pred_idx = int(max_probs.argmax().item())
+    raw_class_name = idx_to_class.get(pred_idx, "minor").lower()
 
-    # -----------------------------------------------------------------------
-    # Rule-based escalation logic on top of the model
-    # -----------------------------------------------------------------------
-    # These thresholds are chosen for safety bias: we prefer to over-call
-    # MAJOR/SEVERE rather than under-report a fatal accident.
-    #
-    # You can tune these if logs show different behaviour.
-    # -----------------------------------------------------------------------
+    severity_map = {
+        "minor": "MINOR",
+        "major": "MAJOR",
+        "severe": "SEVERE",
+    }
+    severity = severity_map.get(raw_class_name, "MINOR")
 
-    # Severe if SEVERE prob is clearly high
-    if p_severe >= 0.60:
-        severity = "SEVERE"
-    # Major if MAJOR is strong, or SEVERE is moderate
-    elif p_major >= 0.50 or p_severe >= 0.40:
-        severity = "MAJOR"
-    # Otherwise treat as minor
-    else:
-        severity = "MINOR"
-
-    # Optional: log probabilities for debugging in Render logs
+    # Optional log for Render
+    p_minor = float(max_probs[class_to_idx["minor"]].item())
+    p_major = float(max_probs[class_to_idx["major"]].item())
+    p_severe = float(max_probs[class_to_idx["severe"]].item())
     print(
         f"[severity] video={video_path} "
+        f"class_to_idx={class_to_idx} "
         f"p_minor={p_minor:.3f} p_major={p_major:.3f} p_severe={p_severe:.3f} "
         f"-> {severity}"
     )
@@ -281,7 +259,7 @@ def predict_severity(video_path: str) -> Tuple[str, str]:
 
 
 # ---------------------------------------------------------------------------
-# Local CLI test hook (optional)
+# Local CLI test hook
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":

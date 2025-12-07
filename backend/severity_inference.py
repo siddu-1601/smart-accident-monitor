@@ -39,7 +39,7 @@ _transform = transforms.Compose(
 # ---------------------------------------------------------------------------
 
 _model: torch.nn.Module | None = None
-_idx_to_class: dict[int, str] | None = None
+_class_to_idx: dict[str, int] | None = None
 
 
 def _infer_class_to_idx_from_checkpoint(checkpoint: dict) -> dict[str, int]:
@@ -47,13 +47,13 @@ def _infer_class_to_idx_from_checkpoint(checkpoint: dict) -> dict[str, int]:
     Try to read class_to_idx from checkpoint; if missing, fall back
     to the training-time folder order you used.
 
-    Your dataset structure was:
+    Dataset structure:
         dataset/minor
         dataset/major
         dataset/severe
 
-    ImageFolder will sort class names alphabetically:
-        ['major', 'minor', 'severe'] -> indices 0,1,2
+    ImageFolder sorts class names alphabetically:
+        ['major', 'minor', 'severe'] -> indices 0, 1, 2
 
     So default mapping = {"major": 0, "minor": 1, "severe": 2}
     """
@@ -86,18 +86,17 @@ def _extract_state_dict_and_classmap(ckpt_raw) -> tuple[dict, dict[str, int]]:
     return state_dict, class_to_idx
 
 
-def _load_model() -> tuple[torch.nn.Module, dict[int, str]]:
+def _load_model() -> tuple[torch.nn.Module, dict[str, int]]:
     """
     Lazy-load model + class mapping once per process.
 
-    IMPORTANT: This builds a plain ResNet18 so keys like
-    "conv1.weight", "layer1.0.conv1.weight", "fc.weight" match
-    your trained checkpoint.
+    Uses a plain ResNet18 so keys like "conv1.weight", "layer1.0.conv1.weight",
+    "fc.weight" match your trained checkpoint.
     """
-    global _model, _idx_to_class
+    global _model, _class_to_idx
 
-    if _model is not None and _idx_to_class is not None:
-        return _model, _idx_to_class
+    if _model is not None and _class_to_idx is not None:
+        return _model, _class_to_idx
 
     if not os.path.exists(MODEL_PATH):
         raise RuntimeError(f"Severity model file not found at {MODEL_PATH}")
@@ -105,9 +104,7 @@ def _load_model() -> tuple[torch.nn.Module, dict[int, str]]:
     ckpt_raw = torch.load(MODEL_PATH, map_location=device)
     state_dict, class_to_idx = _extract_state_dict_and_classmap(ckpt_raw)
 
-    # class_to_idx: {"major":0, "minor":1, "severe":2}
-    idx_to_class = {v: k for k, v in class_to_idx.items()}
-    num_classes = len(idx_to_class)
+    num_classes = len(class_to_idx)
 
     # Build plain ResNet18, then swap final FC
     model = models.resnet18(weights=None)
@@ -120,8 +117,8 @@ def _load_model() -> tuple[torch.nn.Module, dict[int, str]]:
     model.eval()
 
     _model = model
-    _idx_to_class = idx_to_class  # {idx: class_name}
-    return _model, _idx_to_class
+    _class_to_idx = class_to_idx  # {"major":0,"minor":1,"severe":2}
+    return _model, _class_to_idx
 
 
 # ---------------------------------------------------------------------------
@@ -218,14 +215,24 @@ def predict_severity(video_path: str) -> Tuple[str, str]:
     1. Resolve video path on disk.
     2. Sample frames.
     3. Run model on frames as a batch.
-    4. Aggregate probabilities across frames with MAX (worst frame wins).
-    5. Map to severity class.
+    4. Aggregate probabilities across frames.
+       - MAX aggregation (worst frame wins).
+    5. Apply rule-based thresholds on top of model outputs.
+    6. Map to severity class.
 
     Returns:
         severity: "MINOR" | "MAJOR" | "SEVERE"
         accident_type: currently constant "generic"
     """
-    model, idx_to_class = _load_model()
+    model, class_to_idx = _load_model()
+
+    # Make sure expected labels exist
+    if not {"minor", "major", "severe"}.issubset(class_to_idx.keys()):
+        raise RuntimeError(f"class_to_idx missing expected keys: {class_to_idx}")
+
+    idx_minor = class_to_idx["minor"]
+    idx_major = class_to_idx["major"]
+    idx_severe = class_to_idx["severe"]
 
     real_path = _resolve_video_path(video_path)
     frames = _extract_frames(real_path)  # (N, C, H, W)
@@ -237,20 +244,39 @@ def predict_severity(video_path: str) -> Tuple[str, str]:
 
         # MAX aggregation across time: treat severity as the worst observed frame
         max_probs, _ = probs.max(dim=0)        # (num_classes,)
-        pred_idx = int(torch.argmax(max_probs).item())
 
-    # idx_to_class: {idx: class_name}
-    class_name = idx_to_class.get(pred_idx, "minor").lower()
+    # Align probabilities to semantic labels using class_to_idx
+    p_minor = float(max_probs[idx_minor].item())
+    p_major = float(max_probs[idx_major].item())
+    p_severe = float(max_probs[idx_severe].item())
 
-    severity_map = {
-        "minor": "MINOR",
-        "major": "MAJOR",
-        "severe": "SEVERE",
-    }
-    severity = severity_map.get(class_name, "MINOR")
+    # -----------------------------------------------------------------------
+    # Rule-based escalation logic on top of the model
+    # -----------------------------------------------------------------------
+    # These thresholds are chosen for safety bias: we prefer to over-call
+    # MAJOR/SEVERE rather than under-report a fatal accident.
+    #
+    # You can tune these if logs show different behaviour.
+    # -----------------------------------------------------------------------
+
+    # Severe if SEVERE prob is clearly high
+    if p_severe >= 0.60:
+        severity = "SEVERE"
+    # Major if MAJOR is strong, or SEVERE is moderate
+    elif p_major >= 0.50 or p_severe >= 0.40:
+        severity = "MAJOR"
+    # Otherwise treat as minor
+    else:
+        severity = "MINOR"
+
+    # Optional: log probabilities for debugging in Render logs
+    print(
+        f"[severity] video={video_path} "
+        f"p_minor={p_minor:.3f} p_major={p_major:.3f} p_severe={p_severe:.3f} "
+        f"-> {severity}"
+    )
 
     accident_type = "generic"
-
     return severity, accident_type
 
 

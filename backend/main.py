@@ -22,6 +22,7 @@ from sqlalchemy.orm import Session
 
 from .db import get_db, SessionLocal
 from .models import User, Camera, Incident, Alert
+from .severity_inference import predict_severity  # NEW: real ML model
 
 
 # ------------------------------------------------------------------------------
@@ -69,26 +70,28 @@ def get_or_create_anonymous_user(db: Session) -> User:
 
 
 # ------------------------------------------------------------------------------
-# Stub ML classifier + background worker
+# ML classifier wrapper + background worker
 # ------------------------------------------------------------------------------
 
-def classify_severity_stub(video_path: str) -> tuple[str, str]:
+def classify_severity(video_path: str) -> tuple[str, str]:
     """
-    Stub ML classifier.
-    For now, always returns MINOR so no alerts are generated.
+    Wrap the real ML model; fallback to MINOR if inference fails.
     """
-    severity = "MINOR"
-    accident_type = "generic"
-    return severity, accident_type
+    try:
+        return predict_severity(video_path)
+    except Exception as e:
+        # Simple fallback – do not crash the worker if model blows up.
+        print(f"[severity] ML inference failed for {video_path}: {e}")
+        return "MINOR", "generic"
 
 
 def process_incident_video(incident_id: int) -> None:
     """
     Background task:
     - Load Incident
-    - Run stub classifier
+    - Run classifier
     - Update severity/processed fields
-    - Create Alert only for MAJOR/SEVERE (will not happen with stub)
+    - Create Alert only for MAJOR/SEVERE
     """
     db: Session = SessionLocal()
     try:
@@ -98,7 +101,7 @@ def process_incident_video(incident_id: int) -> None:
         if not incident:
             return
 
-        severity, accident_type = classify_severity_stub(incident.video_path)
+        severity, accident_type = classify_severity(incident.video_path)
 
         incident.severity = severity
         incident.accident_type = accident_type
@@ -237,8 +240,7 @@ def post_add_camera(
 @app.get("/upload-incident", response_class=HTMLResponse)
 def get_upload_incident(request: Request):
     """
-    Renders upload_incident.html which you already shared.
-    Form posts back to the same URL (no action attribute).
+    Renders upload_incident.html (your Uber-style flow).
     """
     message = request.query_params.get("message")
     error = request.query_params.get("error")
@@ -263,10 +265,10 @@ async def post_upload_incident(
     background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
 
-    # This matches your JS which sets name="video" on the active input
+    # Frontend sets the active file input's name to "video"
     video: UploadFile = File(...),
 
-    # Hidden fields in your form
+    # Hidden fields from your form
     location_lat: float = Form(...),
     location_lng: float = Form(...),
 
@@ -276,26 +278,22 @@ async def post_upload_incident(
     """
     Handles the Uber-style upload flow:
 
-    - Accepts the 'video' file field (camera/gallery toggle already sets name="video").
-    - Reads location_lat and location_lng from hidden inputs.
+    - Accepts the 'video' file field.
+    - Reads location_lat and location_lng.
     - Uses or creates an 'anonymous' user so user_id is never NULL.
-    - Inserts Incident with severity=PENDING; background worker sets MINOR.
+    - Inserts Incident with severity=PENDING; background worker sets final severity.
     """
 
-    # 1) Ensure we have an anonymous user
     anon_user = get_or_create_anonymous_user(db)
 
-    # 2) Save the video file under /static/uploads
     filename = f"{datetime.utcnow().strftime('%Y%m%d%H%M%S')}_{video.filename}"
     file_path = os.path.join(UPLOAD_DIR, filename)
 
     with open(file_path, "wb") as buffer:
         shutil.copyfileobj(video.file, buffer)
 
-    # Path that can be served via /static
     relative_video_path = f"/static/uploads/{filename}"
 
-    # 3) Insert incident row
     incident = Incident(
         user_id=anon_user.id,
         video_path=relative_video_path,
@@ -310,10 +308,8 @@ async def post_upload_incident(
     db.commit()
     db.refresh(incident)
 
-    # 4) Kick background processing
     background_tasks.add_task(process_incident_video, incident.id)
 
-    # 5) Redirect back with success message
     success_msg = "Incident submitted successfully. It will be processed shortly."
     url = f"/upload-incident?message={success_msg}"
 

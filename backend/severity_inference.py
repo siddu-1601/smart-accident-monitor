@@ -35,29 +35,64 @@ _transform = transforms.Compose(
 
 
 # ---------------------------------------------------------------------------
-# Model definition (must match the training architecture)
+# Global model state
 # ---------------------------------------------------------------------------
 
-class SeverityModel(nn.Module):
-    def __init__(self, num_classes: int = 3):
-        super().__init__()
-        base = models.resnet18(weights=None)
-        in_features = base.fc.in_features
-        base.fc = nn.Linear(in_features, num_classes)
-        self.backbone = base
-
-    def forward(self, x):
-        # x: (B, C, H, W)
-        return self.backbone(x)
-
-
-_model: SeverityModel | None = None
+_model: torch.nn.Module | None = None
 _idx_to_class: dict[int, str] | None = None
 
 
-def _load_model() -> tuple[SeverityModel, dict[int, str]]:
+def _infer_class_to_idx_from_checkpoint(checkpoint: dict) -> dict[str, int]:
+    """
+    Try to read class_to_idx from checkpoint; if missing, fall back
+    to the training-time folder order you used.
+
+    Your dataset structure was:
+        dataset/minor
+        dataset/major
+        dataset/severe
+
+    ImageFolder will sort class names alphabetically:
+        ['major', 'minor', 'severe'] -> indices 0,1,2
+
+    So default mapping = {"major": 0, "minor": 1, "severe": 2}
+    """
+    if "class_to_idx" in checkpoint and isinstance(checkpoint["class_to_idx"], dict):
+        return checkpoint["class_to_idx"]
+
+    return {"major": 0, "minor": 1, "severe": 2}
+
+
+def _extract_state_dict_and_classmap(ckpt_raw) -> tuple[dict, dict[str, int]]:
+    """
+    Handle different checkpoint formats:
+    - torch.save(model.state_dict())
+    - torch.save({"state_dict": ..., "class_to_idx": ...})
+    """
+    if isinstance(ckpt_raw, dict) and "state_dict" in ckpt_raw:
+        state_dict = ckpt_raw["state_dict"]
+        class_to_idx = _infer_class_to_idx_from_checkpoint(ckpt_raw)
+        return state_dict, class_to_idx
+
+    if isinstance(ckpt_raw, dict):
+        # Could be a plain state_dict saved via torch.save(model.state_dict())
+        state_dict = ckpt_raw
+        class_to_idx = _infer_class_to_idx_from_checkpoint({})
+        return state_dict, class_to_idx
+
+    # Fallback: treat as raw state_dict
+    state_dict = ckpt_raw
+    class_to_idx = _infer_class_to_idx_from_checkpoint({})
+    return state_dict, class_to_idx
+
+
+def _load_model() -> tuple[torch.nn.Module, dict[int, str]]:
     """
     Lazy-load model + class mapping once per process.
+
+    IMPORTANT: This builds a plain ResNet18 so keys like
+    "conv1.weight", "layer1.0.conv1.weight", "fc.weight" match
+    your trained checkpoint.
     """
     global _model, _idx_to_class
 
@@ -67,27 +102,25 @@ def _load_model() -> tuple[SeverityModel, dict[int, str]]:
     if not os.path.exists(MODEL_PATH):
         raise RuntimeError(f"Severity model file not found at {MODEL_PATH}")
 
-    checkpoint = torch.load(MODEL_PATH, map_location=device)
+    ckpt_raw = torch.load(MODEL_PATH, map_location=device)
+    state_dict, class_to_idx = _extract_state_dict_and_classmap(ckpt_raw)
 
-    if isinstance(checkpoint, dict) and "state_dict" in checkpoint:
-        state_dict = checkpoint["state_dict"]
-    else:
-        state_dict = checkpoint
-
-    class_to_idx = checkpoint.get(
-        "class_to_idx",
-        {"major": 0, "minor": 1, "severe": 2},
-    )
+    # class_to_idx: {"major":0, "minor":1, "severe":2}
     idx_to_class = {v: k for k, v in class_to_idx.items()}
-
     num_classes = len(idx_to_class)
-    model = SeverityModel(num_classes=num_classes)
+
+    # Build plain ResNet18, then swap final FC
+    model = models.resnet18(weights=None)
+    in_features = model.fc.in_features
+    model.fc = nn.Linear(in_features, num_classes)
+
+    # Load weights from checkpoint (no backbone.* prefix)
     model.load_state_dict(state_dict)
     model.to(device)
     model.eval()
 
     _model = model
-    _idx_to_class = idx_to_class
+    _idx_to_class = idx_to_class  # {idx: class_name}
     return _model, _idx_to_class
 
 
@@ -130,8 +163,9 @@ def _extract_frames(video_fs_path: str, num_frames: int = 16) -> torch.Tensor:
         raise RuntimeError(f"Failed to open video: {video_fs_path}")
 
     total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+
+    # If metadata is broken, fall back to sequential reads
     if total_frames <= 0:
-        # try to just read sequentially up to some max
         frames = []
         for _ in range(num_frames):
             ret, frame = cap.read()
@@ -140,12 +174,16 @@ def _extract_frames(video_fs_path: str, num_frames: int = 16) -> torch.Tensor:
             frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
             frames.append(_transform(frame))
         cap.release()
+
         if not frames:
             raise RuntimeError(f"No frames extracted from: {video_fs_path}")
+
         while len(frames) < num_frames:
             frames.append(frames[-1].clone())
+
         return torch.stack(frames, dim=0)
 
+    # Uniform sampling over the video
     indices = np.linspace(0, total_frames - 1, num_frames).astype(int)
     frames = []
 
@@ -176,11 +214,16 @@ def predict_severity(video_path: str) -> Tuple[str, str]:
     """
     Core entrypoint used by the FastAPI background worker.
 
+    Flow:
     1. Resolve video path on disk.
     2. Sample frames.
     3. Run model on frames as a batch.
-    4. Average probabilities across frames.
+    4. Aggregate probabilities across frames with MAX (worst frame wins).
     5. Map to severity class.
+
+    Returns:
+        severity: "MINOR" | "MAJOR" | "SEVERE"
+        accident_type: currently constant "generic"
     """
     model, idx_to_class = _load_model()
 
@@ -189,11 +232,14 @@ def predict_severity(video_path: str) -> Tuple[str, str]:
     frames = frames.to(device)
 
     with torch.no_grad():
-        outputs = model(frames)  # (N, num_classes)
+        outputs = model(frames)                # (N, num_classes)
         probs = torch.softmax(outputs, dim=1)  # (N, num_classes)
-        mean_probs = probs.mean(dim=0)  # (num_classes,)
-        pred_idx = int(torch.argmax(mean_probs).item())
 
+        # MAX aggregation across time: treat severity as the worst observed frame
+        max_probs, _ = probs.max(dim=0)        # (num_classes,)
+        pred_idx = int(torch.argmax(max_probs).item())
+
+    # idx_to_class: {idx: class_name}
     class_name = idx_to_class.get(pred_idx, "minor").lower()
 
     severity_map = {
@@ -203,7 +249,22 @@ def predict_severity(video_path: str) -> Tuple[str, str]:
     }
     severity = severity_map.get(class_name, "MINOR")
 
-    # You can expand this later if you want specific accident types.
     accident_type = "generic"
 
     return severity, accident_type
+
+
+# ---------------------------------------------------------------------------
+# Local CLI test hook (optional)
+# ---------------------------------------------------------------------------
+
+if __name__ == "__main__":
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Run severity prediction on a video file")
+    parser.add_argument("video", help="Path to video file")
+    args = parser.parse_args()
+
+    sev, acc_type = predict_severity(args.video)
+    print("Severity:", sev)
+    print("Accident type:", acc_type)

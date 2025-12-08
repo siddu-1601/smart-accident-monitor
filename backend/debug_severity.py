@@ -1,20 +1,66 @@
-# backend/debug_severity.py
-#
-# Debug script to run FULL ML inference locally/Colab.
-# This is NOT used by the Render deployment.
+import sys
+import requests
+from backend.severity_inference_ml import predict_severity_ml
 
-import argparse
-from .severity_inference_ml import predict_severity_ml  # type: ignore
+# ============================
+# CONFIG: UPDATE THESE ONLY
+# ============================
 
-
-def debug_video(video_path: str) -> None:
-    sev, acc_type = predict_severity_ml(video_path)
-    # predict_severity_ml already prints probabilities and mapping.
-    print(f"[debug] Final decision: severity={sev}, accident_type={acc_type}")
+FAST2SMS_API_KEY = "REMOVED_FOR_GITHUB"
+ALERT_PHONE_NUMBER = "REMOVED_FOR_GITHUB"
 
 
-if __name__ == "__main__":
-    parser = argparse.ArgumentParser()
-    parser.add_argument("video", help="Path to video file (local or /static/uploads/...)")
-    args = parser.parse_args()
-    debug_video(args.video)
+# ============================
+# SMS ALERT FUNCTION
+# ============================
+
+def send_severe_alert(video_name):
+    url = "https://www.fast2sms.com/dev/bulkV2"
+
+    message = f"SEVERE ACCIDENT DETECTED! Video: {video_name}. Immediate action required."
+
+    payload = {
+        "route": "q",
+        "message": message,
+        "language": "english",
+        "numbers": ALERT_PHONE_NUMBER
+    }
+
+    headers = {
+        "authorization": FAST2SMS_API_KEY,
+        "Content-Type": "application/json"
+    }
+
+    try:
+        response = requests.post(url, json=payload, headers=headers, timeout=10)
+        print("[ALERT] SMS sent:", response.json())
+    except Exception as e:
+        print("[ALERT ERROR] Failed to send SMS:", str(e))
+
+
+# ============================
+# MAIN EXECUTION
+# ============================
+
+if len(sys.argv) < 2:
+    print("Usage: python -m backend.debug_severity <video_path>")
+    sys.exit(1)
+
+video_path = sys.argv[1]
+
+print(f"[INFO] Processing video: {video_path}")
+
+severity, probs_text = predict_severity_ml(video_path)
+
+# ML already prints the probabilities internally, so just print what we got
+print(f"Final decision: {severity}")
+
+# ============================
+# SEND ALERT IF SEVERE
+# ============================
+
+if severity.upper() == "SEVERE":
+    print("[ALERT] Sending SMS...")
+    send_severe_alert(video_path)
+else:
+    print("[ALERT] No SMS sent.")
